@@ -1,0 +1,20 @@
+# Subscription files and generated configurations may contain proxy credentials.
+/local/
+/input/
+/output/
+/providers/
+merged_*.yml
+merged_*.yaml
+
+# Python and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+
+# Logs and editor/OS files
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

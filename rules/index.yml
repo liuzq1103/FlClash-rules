@@ -1,0 +1,17 @@
+rule-sets:
+  # Priority is top-to-bottom. Keep REJECT before AI, and AI exceptions before DIRECT.
+  - name: Custom-Reject
+    file: reject.yaml
+    target: REJECT
+  - name: Custom-AI
+    file: ai.yaml
+    target: Ai+
+  - name: Custom-Academic
+    file: academic.yaml
+    target: DIRECT
+  - name: Custom-Tailscale
+    file: tailscale.yaml
+    target: DIRECT
+  - name: Custom-Direct
+    file: direct.yaml
+    target: DIRECT

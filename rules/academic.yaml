@@ -1,0 +1,29 @@
+payload:
+  # Publishers and journal platforms that should use the local/institutional route
+  - DOMAIN-SUFFIX,wiley.com
+  - DOMAIN-SUFFIX,pnas.org
+  - DOMAIN-SUFFIX,nature.com
+  - DOMAIN-SUFFIX,springer.com
+  - DOMAIN-SUFFIX,springernature.com
+  - DOMAIN-SUFFIX,acs.org
+  - DOMAIN-SUFFIX,ieee.org
+  - DOMAIN-SUFFIX,aps.org
+  - DOMAIN-SUFFIX,taylorandfrancis.com
+  - DOMAIN-SUFFIX,tandfonline.com
+  - DOMAIN-SUFFIX,oup.com
+  - DOMAIN-SUFFIX,science.org
+  - DOMAIN-SUFFIX,cell.com
+
+  # Discovery, indexing and full-text dependencies
+  - DOMAIN-SUFFIX,webofscience.com
+  - DOMAIN-SUFFIX,webofknowledge.com
+  - DOMAIN-SUFFIX,clarivate.com
+  - DOMAIN-SUFFIX,scopus.com
+  - DOMAIN-SUFFIX,sciencedirect.com
+  - DOMAIN-SUFFIX,sciencedirectassets.com
+  - DOMAIN-SUFFIX,els-cdn.com
+  - DOMAIN-SUFFIX,elsevier.com
+
+  # Research tools explicitly kept on the direct route
+  - DOMAIN-SUFFIX,cellchat.org
+  - DOMAIN-SUFFIX,cancerserumatlas.com

@@ -1,0 +1,9 @@
+payload:
+  # Tailscale control plane, DERP relays and MagicDNS names
+  - DOMAIN-SUFFIX,tailscale.com
+  - DOMAIN-SUFFIX,tailscale.io
+  - DOMAIN-SUFFIX,ts.net
+
+  # Tailnet IPv4 and IPv6 address spaces
+  - IP-CIDR,100.64.0.0/10,no-resolve
+  - IP-CIDR6,fd7a:115c:a1e0::/48,no-resolve

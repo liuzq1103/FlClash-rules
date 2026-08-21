@@ -1,0 +1,8 @@
+payload:
+  # Google Ads / DoubleClick
+  - DOMAIN-SUFFIX,doubleclick.net
+  - DOMAIN-SUFFIX,googlesyndication.com
+  - DOMAIN-SUFFIX,googleadservices.com
+
+  # Analytics explicitly blocked in the legacy rules
+  - DOMAIN,sb.scorecardresearch.com

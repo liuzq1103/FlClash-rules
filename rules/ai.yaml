@@ -1,0 +1,42 @@
+payload:
+  # Academic and research services that work more reliably through an AI-safe node
+  - DOMAIN-SUFFIX,ncbi.nlm.nih.gov
+  - DOMAIN-SUFFIX,sagepub.com
+  - DOMAIN,gene-structure.vercel.app
+  - DOMAIN-SUFFIX,synapse.org
+  - DOMAIN,repo-prod.prod.sagebase.org
+  - DOMAIN-SUFFIX,alphafoldserver.com
+
+  # Google AI and shared dependencies (ordinary Google remains on subscription rules)
+  - DOMAIN-SUFFIX,gemini.google.com
+  - DOMAIN-SUFFIX,aistudio.google.com
+  - DOMAIN-SUFFIX,bard.google.com
+  - DOMAIN-SUFFIX,makersuite.google.com
+  - DOMAIN-SUFFIX,generativelanguage.googleapis.com
+  - DOMAIN-SUFFIX,deepmind.com
+  - DOMAIN-SUFFIX,googleapis.com
+  - DOMAIN-SUFFIX,gstatic.com
+  - DOMAIN-SUFFIX,googleusercontent.com
+
+  # Claude's current product domain; claude.ai/anthropic.com use subscription providers
+  - DOMAIN-SUFFIX,claude.com
+
+  # Grok / X
+  - DOMAIN-SUFFIX,grok.com
+  - DOMAIN-SUFFIX,x.ai
+  - DOMAIN-SUFFIX,x.com
+
+  # GitHub and GitHub Copilot
+  - DOMAIN-SUFFIX,github.com
+  - DOMAIN-SUFFIX,githubassets.com
+  - DOMAIN-SUFFIX,githubusercontent.com
+  - DOMAIN-SUFFIX,githubcopilot.com
+  - DOMAIN,default.exp-tas.com
+
+  # AI development, models and container delivery
+  - DOMAIN-SUFFIX,roboflow.com
+  - DOMAIN-SUFFIX,huggingface.co
+  - DOMAIN-SUFFIX,hf.co
+  - DOMAIN-SUFFIX,docker.io
+  - DOMAIN-SUFFIX,docker.com
+  - DOMAIN-SUFFIX,intercom.io

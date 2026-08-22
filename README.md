@@ -1,6 +1,6 @@
-# FlClash 个性化分流规则
+# FlClash 自定义分流规则
 
-本项目把机场订阅当作动态节点源，把个人规则编译成 Clash Verge Rev / FlClash 可共用的 **JavaScript 扩展脚本**。客户端每次更新订阅后都会基于最新节点重新生成策略组，不复制、不保存完整订阅配置。
+本项目把代理订阅当作动态节点源，把自定义规则编译成 Clash Verge Rev / FlClash 可共用的 **JavaScript 扩展脚本**。客户端每次更新订阅后都会基于最新节点重新生成策略组，不复制、不保存完整订阅配置。
 
 > 主客户端推荐 Clash Verge Rev。FlClash 使用“脚本”覆写模式；不要使用“自定义 → 一键填入”保存整套节点和策略组，后者是静态副本，节点名称变化后容易失效。
 
@@ -14,7 +14,7 @@
 ```
 
 - 原始订阅继续负责节点、DNS、通用 provider 和基础分流。
-- `rules/*.yaml` 是个人规则的唯一来源。
+- `rules/*.yaml` 是自定义规则的唯一来源。
 - `clash.py` 将分类规则展开为普通 Mihomo 规则并生成 `dist/override.js`。
 - 脚本不联网、不读取 GitHub、不包含订阅地址或节点凭据。
 - 脚本在副本上修改并完成自检；任何异常都返回原始配置。
@@ -54,7 +54,7 @@ python clash.py --check
 
 然后：
 
-1. 在 Clash Verge Rev 中保留并更新原始 `gw树洞.yaml` 订阅。
+1. 在 Clash Verge Rev 中保留并更新自己的原始订阅配置。
 2. 给这条订阅配置“扩展脚本”，粘贴 `dist/override.js` 的完整内容。
 3. 不要把脚本放到“全局扩展脚本”；全局扩展配置也保持为空。
 4. 先使用“预览”确认存在 `Ai稳定选择`、`Ai测速备用`、`学术搜索`、`学术访问`，且规则仍以原订阅的 `MATCH` 结束。
@@ -170,7 +170,7 @@ python -m unittest discover -s tests -v
 node --test tests/*.js
 ```
 
-再把更新后的 `dist/override.js` 粘贴到该订阅的扩展脚本。规则没有变化时，机场订阅日常更新不需要重新运行 Python。
+再把更新后的 `dist/override.js` 粘贴到该订阅的扩展脚本。规则没有变化时，代理订阅日常更新不需要重新运行 Python。
 
 ## 学术与 Zotero 原则
 
@@ -203,7 +203,7 @@ python clash.py --check-rules           只检查 rules/，不读取订阅
 
 ## GitHub 同步与隐私
 
-私有仓库只同步规则、构建工具、测试、README 和生成的无敏感信息脚本。提交前检查：
+仓库只同步规则、构建工具、测试、README 和生成的无敏感信息脚本。无论公开使用还是自行派生，提交前都应检查：
 
 ```powershell
 git status --short
@@ -218,4 +218,8 @@ git commit -m "Add subscription extension workflow"
 git push
 ```
 
-`Loyalsoldier/clash-rules` 等公共项目提供通用的国内外、广告、GFW 和 IP 分类；机场订阅已经包含同类 provider。本项目只维护个人学术、AI 与 Tailscale 诉求，避免整套重复引入造成冲突。
+`Loyalsoldier/clash-rules` 等公共项目提供通用的国内外、广告、GFW 和 IP 分类；代理订阅通常已经包含同类 provider。本项目只维护明确的学术、AI 与 Tailscale 分流诉求，避免整套重复引入造成冲突。
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。使用、修改或分发前，请自行确认代理订阅服务条款及所在地区的法律要求；本仓库不提供订阅、节点或网络服务。

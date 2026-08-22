@@ -1,0 +1,4 @@
+payload:
+  # Keep Scholar on one manually selected, stable exit to reduce CAPTCHA churn.
+  - DOMAIN,scholar.google.com
+  - DOMAIN,scholar.google.com.hk

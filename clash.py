@@ -1,6 +1,8 @@
 import argparse
 import copy
+import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -11,13 +13,15 @@ import yaml
 BASE_DIR = Path(__file__).resolve().parent
 RULES_DIR = BASE_DIR / "rules"
 RULES_INDEX = RULES_DIR / "index.yml"
+TEMPLATE_PATH = BASE_DIR / "templates" / "override.js.tpl"
+DEFAULT_SCRIPT_OUTPUT = BASE_DIR / "dist" / "override.js"
 DEFAULT_SOURCE = BASE_DIR / "local" / "gw树洞.yaml"
 DEFAULT_OUTPUT_DIR = BASE_DIR / "local" / "output"
 OUTPUT_PREFIX = "merged_"
 
 AI_GROUP = "Ai+"
 AI_AUTO_GROUP = "Ai自动选择"
-MANUAL_GROUP = "手动选择"
+SCHOLAR_GROUP = "学术搜索"
 FALLBACK_GROUP = "漏网之鱼"
 CUSTOM_PROVIDER_PREFIX = "Custom-"
 
@@ -47,13 +51,15 @@ SUPPORTED_RULE_TYPES = {
     "GEOSITE",
 }
 
-# Go regular expression used by Mihomo. Short country codes are bounded so
+# Keep short country codes bounded so
 # ordinary node names containing "tw", "hk", or "mo" are not false matches.
 AI_EXCLUDE_FILTER = (
     r"(?i)(?:🇭🇰|🇲🇴|🇹🇼|香港|澳门|澳門|台湾|台灣|"
     r"hong[ -]?kong|macau|macao|taiwan|"
     r"(?:^|[^a-z])(?:hk|mo|tw)(?:[^a-z]|$)|"
-    r"^(?:expire|traffic|sync):|官网)"
+    r"剩余流量|流量剩余|到期时间|过期时间|重置时间|套餐提示|订阅信息|"
+    r"(?:^|[\s|_-])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)"
+    r"(?:[\s:：|_-]|$))"
 )
 
 
@@ -201,37 +207,66 @@ def configure_ai_groups(config):
     if ai_group is None:
         raise ConfigError(f"source config is missing required proxy group: {AI_GROUP}")
 
-    groups[:] = [group for group in groups if group.get("name") != AI_AUTO_GROUP]
+    groups[:] = [
+        group
+        for group in groups
+        if group.get("name") not in {AI_AUTO_GROUP, SCHOLAR_GROUP}
+    ]
     ai_index = groups.index(ai_group)
+
+    proxies = config.get("proxies")
+    if not isinstance(proxies, list):
+        raise ConfigError("source config must contain a proxies list")
+    excluded = re.compile(AI_EXCLUDE_FILTER)
+    ai_candidates = [
+        proxy["name"]
+        for proxy in proxies
+        if isinstance(proxy, dict)
+        and isinstance(proxy.get("name"), str)
+        and proxy["name"]
+        and not excluded.search(proxy["name"])
+        and str(proxy.get("type", "")).lower() != "direct"
+    ]
+    if not ai_candidates:
+        raise ConfigError(f"no eligible nodes remain for {AI_AUTO_GROUP}")
+
     ai_auto = {
         "name": AI_AUTO_GROUP,
         "type": "url-test",
-        "include-all-proxies": True,
-        "exclude-filter": AI_EXCLUDE_FILTER,
-        "exclude-type": "direct",
+        "proxies": ai_candidates,
         "url": "http://www.gstatic.com/generate_204",
         "interval": 300,
         "tolerance": 20,
         "lazy": True,
-        "expected-status": 204,
     }
-    groups.insert(ai_index, ai_auto)
+    scholar = {
+        "name": SCHOLAR_GROUP,
+        "type": "select",
+        "proxies": [AI_AUTO_GROUP] + ai_candidates,
+    }
+    groups[ai_index:ai_index] = [ai_auto, scholar]
 
-    explicit_choices = [AI_AUTO_GROUP]
-    if _group_by_name(config, MANUAL_GROUP) is not None:
-        explicit_choices.append(MANUAL_GROUP)
-    ai_group["proxies"] = explicit_choices
-    ai_group["include-all-proxies"] = True
-    ai_group["exclude-filter"] = AI_EXCLUDE_FILTER
-    ai_group["exclude-type"] = "direct"
-    ai_group["default-selected"] = AI_AUTO_GROUP
+    # Explicit node lists avoid runtime compatibility problems in FlClash
+    # versions that display newer dynamic fields but do not preserve them.
+    ai_group["proxies"] = [AI_AUTO_GROUP] + ai_candidates
+    for key in (
+        "include-all",
+        "include-all-proxies",
+        "include-all-providers",
+        "filter",
+        "exclude-filter",
+        "exclude-type",
+        "default-selected",
+        "empty-fallback",
+    ):
+        ai_group.pop(key, None)
 
     fallback = _group_by_name(config, FALLBACK_GROUP)
     if fallback is None:
         raise ConfigError(f"source config is missing required proxy group: {FALLBACK_GROUP}")
     choices = [choice for choice in fallback.get("proxies", []) if choice != "DIRECT"]
     fallback["proxies"] = ["DIRECT"] + choices
-    fallback["default-selected"] = "DIRECT"
+    fallback.pop("default-selected", None)
 
 
 def fix_provider_paths(config):
@@ -246,6 +281,19 @@ def fix_provider_paths(config):
             apple["path"] = "./providers/rule/Apple.yaml"
 
 
+def _expand_custom_rules(rule_sets):
+    expanded = []
+    for rule_set in rule_sets:
+        for payload_rule in rule_set["payload"]:
+            parts = [part.strip() for part in payload_rule.split(",")]
+            if parts[-1] == "no-resolve":
+                parts.insert(-1, rule_set["target"])
+            else:
+                parts.append(rule_set["target"])
+            expanded.append(",".join(parts))
+    return expanded
+
+
 def merge_custom_rules(config, rule_sets):
     providers = config.setdefault("rule-providers", {})
     if not isinstance(providers, dict):
@@ -255,29 +303,21 @@ def merge_custom_rules(config, rule_sets):
         if name.startswith(CUSTOM_PROVIDER_PREFIX):
             del providers[name]
 
-    for rule_set in rule_sets:
-        name = rule_set["name"]
-        if name in providers:
-            raise ConfigError(f"source config already defines custom provider name: {name}")
-        providers[name] = {
-            "type": "inline",
-            "behavior": "classical",
-            "payload": list(rule_set["payload"]),
-        }
-
     source_rules = config.get("rules")
     if not isinstance(source_rules, list):
         raise ConfigError("source config must contain a rules list")
+    custom_rules = _expand_custom_rules(rule_sets)
+    custom_rule_set = set(custom_rules)
     source_rules = [
         rule
         for rule in source_rules
         if not (
             isinstance(rule, str)
-            and rule.startswith("RULE-SET," + CUSTOM_PROVIDER_PREFIX)
+            and (
+                rule.startswith("RULE-SET," + CUSTOM_PROVIDER_PREFIX)
+                or rule in custom_rule_set
+            )
         )
-    ]
-    custom_rules = [
-        f"RULE-SET,{rule_set['name']},{rule_set['target']}" for rule_set in rule_sets
     ]
     config["rules"] = custom_rules + source_rules
 
@@ -345,9 +385,7 @@ def validate_config(config, rule_sets):
         if target and target not in valid_targets:
             raise ConfigError(f"rule references missing policy target {target}: {rule}")
 
-    expected_prefix = [
-        f"RULE-SET,{rule_set['name']},{rule_set['target']}" for rule_set in rule_sets
-    ]
+    expected_prefix = _expand_custom_rules(rule_sets)
     if rules[: len(expected_prefix)] != expected_prefix:
         raise ConfigError("custom rules are not at the beginning in the declared priority order")
     if not rules or not rules[-1].startswith("MATCH,"):
@@ -355,13 +393,16 @@ def validate_config(config, rule_sets):
 
     ai_auto = _group_by_name(config, AI_AUTO_GROUP)
     ai_group = _group_by_name(config, AI_GROUP)
+    scholar = _group_by_name(config, SCHOLAR_GROUP)
     fallback = _group_by_name(config, FALLBACK_GROUP)
-    if not ai_auto or ai_auto.get("exclude-filter") != AI_EXCLUDE_FILTER:
-        raise ConfigError(f"{AI_AUTO_GROUP} is missing its exclusion filter")
-    if not ai_group or ai_group.get("default-selected") != AI_AUTO_GROUP:
-        raise ConfigError(f"{AI_GROUP} must default to {AI_AUTO_GROUP}")
-    if not fallback or fallback.get("default-selected") != "DIRECT":
-        raise ConfigError(f"{FALLBACK_GROUP} must default to DIRECT")
+    if not ai_auto or not ai_auto.get("proxies"):
+        raise ConfigError(f"{AI_AUTO_GROUP} must contain explicit proxy nodes")
+    if not ai_group or ai_group.get("proxies", [None])[0] != AI_AUTO_GROUP:
+        raise ConfigError(f"{AI_GROUP} must list {AI_AUTO_GROUP} first")
+    if not scholar or scholar.get("proxies", [None])[0] != AI_AUTO_GROUP:
+        raise ConfigError(f"{SCHOLAR_GROUP} must list {AI_AUTO_GROUP} first")
+    if not fallback or fallback.get("proxies", [None])[0] != "DIRECT":
+        raise ConfigError(f"{FALLBACK_GROUP} must list DIRECT first")
 
 
 def write_yaml_atomic(output_path, data):
@@ -387,14 +428,55 @@ def write_yaml_atomic(output_path, data):
             temp_path.unlink()
 
 
+def write_text_atomic(output_path, text):
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            newline="\n",
+            dir=str(output_path.parent),
+            prefix=f".{output_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+            handle.write(text)
+        if temp_path.read_text(encoding="utf-8") != text:
+            raise ConfigError(f"failed to verify generated text: {output_path}")
+        os.replace(str(temp_path), str(output_path))
+    finally:
+        if temp_path and temp_path.exists():
+            temp_path.unlink()
+
+
+def render_override_script(rule_sets, template_path=TEMPLATE_PATH):
+    template_path = Path(template_path)
+    if not template_path.is_file():
+        raise ConfigError(f"extension template not found: {template_path}")
+    template = template_path.read_text(encoding="utf-8")
+    marker = "__CUSTOM_RULES_JSON__"
+    if template.count(marker) != 1:
+        raise ConfigError(f"extension template must contain exactly one {marker} marker")
+    rules_json = json.dumps(
+        _expand_custom_rules(rule_sets), ensure_ascii=False, indent=2
+    )
+    script = template.replace(marker, rules_json)
+    if marker in script or "function main(config)" not in script:
+        raise ConfigError("generated extension script is incomplete")
+    return script.rstrip() + "\n"
+
+
 def build_argument_parser():
     parser = argparse.ArgumentParser(
-        description="Merge maintainable custom rules into a FlClash/Mihomo subscription."
+        description="Build a Clash Verge Rev subscription extension from maintainable rules."
     )
     parser.add_argument(
         "source",
         nargs="?",
-        help=f"subscription YAML (default: {DEFAULT_SOURCE})",
+        help=f"subscription YAML for --legacy-merge (default: {DEFAULT_SOURCE})",
     )
     parser.add_argument(
         "--check",
@@ -405,6 +487,11 @@ def build_argument_parser():
         "--check-rules",
         action="store_true",
         help="validate only the tracked rule files (used by GitHub Actions)",
+    )
+    parser.add_argument(
+        "--legacy-merge",
+        action="store_true",
+        help="emergency fallback: generate a complete merged YAML",
     )
     return parser
 
@@ -418,25 +505,37 @@ def main(argv=None):
             print(f"Rule validation passed: {len(rule_sets)} sets, {rule_count} rules")
             return 0
 
-        source_path = Path(args.source).resolve() if args.source else DEFAULT_SOURCE
-        if not source_path.is_file():
-            raise ConfigError(
-                f"subscription not found: {source_path}\n"
-                f"Place the current subscription at {DEFAULT_SOURCE} or pass a path."
-            )
+        if args.source and not args.legacy_merge:
+            raise ConfigError("a subscription path is only valid with --legacy-merge")
 
-        source_config = load_yaml(source_path)
-        merged = apply_customizations(source_config, rule_sets)
+        script = render_override_script(rule_sets)
         if args.check:
-            print(
-                f"Configuration validation passed: {source_path} "
-                f"({len(rule_sets)} custom sets, {rule_count} rules)"
-            )
+            if not DEFAULT_SCRIPT_OUTPUT.is_file():
+                raise ConfigError(f"generated extension is missing: {DEFAULT_SCRIPT_OUTPUT}")
+            if DEFAULT_SCRIPT_OUTPUT.read_text(encoding="utf-8") != script:
+                raise ConfigError("dist/override.js is stale; run: python clash.py")
+            compatibility = ""
+            if DEFAULT_SOURCE.is_file():
+                apply_customizations(load_yaml(DEFAULT_SOURCE), rule_sets)
+                compatibility = "; local subscription compatible"
+            print(f"Extension validation passed: {rule_count} rules{compatibility}")
             return 0
 
-        output_path = DEFAULT_OUTPUT_DIR / f"{OUTPUT_PREFIX}{source_path.name}"
-        write_yaml_atomic(output_path, merged)
-        print(f"Merged configuration saved to: {output_path}")
+        if args.legacy_merge:
+            source_path = Path(args.source).resolve() if args.source else DEFAULT_SOURCE
+            if not source_path.is_file():
+                raise ConfigError(
+                    f"subscription not found: {source_path}\n"
+                    f"Place it at {DEFAULT_SOURCE} or pass a path after --legacy-merge."
+                )
+            merged = apply_customizations(load_yaml(source_path), rule_sets)
+            output_path = DEFAULT_OUTPUT_DIR / f"{OUTPUT_PREFIX}{source_path.name}"
+            write_yaml_atomic(output_path, merged)
+            print(f"Emergency merged configuration saved to: {output_path}")
+            return 0
+
+        write_text_atomic(DEFAULT_SCRIPT_OUTPUT, script)
+        print(f"Subscription extension saved to: {DEFAULT_SCRIPT_OUTPUT}")
         return 0
     except (ConfigError, OSError, yaml.YAMLError) as error:
         print(f"Error: {error}", file=sys.stderr)

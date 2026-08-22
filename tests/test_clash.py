@@ -1,6 +1,8 @@
 import copy
 import re
+import tempfile
 import unittest
+from pathlib import Path
 
 import clash
 
@@ -57,6 +59,7 @@ class RuleLoadingTests(unittest.TestCase):
             [
                 "Custom-Reject",
                 "Custom-AI",
+                "Custom-Scholar",
                 "Custom-Academic",
                 "Custom-Tailscale",
                 "Custom-Direct",
@@ -88,6 +91,16 @@ class RuleLoadingTests(unittest.TestCase):
         self.assertNotIn("DOMAIN-SUFFIX,example.com", payload)
         self.assertNotIn("DOMAIN-SUFFIX,oxfordjournals.org", payload)
 
+    def test_scholar_uses_narrow_exact_domains(self):
+        scholar = next(
+            rule_set for rule_set in self.rule_sets if rule_set["name"] == "Custom-Scholar"
+        )
+        self.assertEqual(scholar["target"], "学术搜索")
+        self.assertEqual(
+            scholar["payload"],
+            ["DOMAIN,scholar.google.com", "DOMAIN,scholar.google.com.hk"],
+        )
+
 
 class MergeTests(unittest.TestCase):
     @classmethod
@@ -103,18 +116,22 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(auto, original_auto)
 
         ai_auto = clash._group_by_name(merged, "Ai自动选择")
-        self.assertTrue(ai_auto["include-all-proxies"])
-        self.assertIn("香港", ai_auto["exclude-filter"])
-        self.assertEqual(ai_auto["exclude-type"], "direct")
+        self.assertEqual(ai_auto["proxies"], ["🇺🇸 美国-01"])
+        self.assertNotIn("include-all-proxies", ai_auto)
+        self.assertNotIn("exclude-filter", ai_auto)
 
         ai = clash._group_by_name(merged, "Ai+")
-        self.assertEqual(ai["default-selected"], "Ai自动选择")
         self.assertEqual(ai["proxies"][0], "Ai自动选择")
-        self.assertEqual(ai["exclude-type"], "direct")
+        self.assertEqual(ai["proxies"][1:], ["🇺🇸 美国-01"])
+        self.assertNotIn("include-all-proxies", ai)
+        self.assertNotIn("default-selected", ai)
+
+        scholar = clash._group_by_name(merged, "学术搜索")
+        self.assertEqual(scholar["proxies"], ["Ai自动选择", "🇺🇸 美国-01"])
 
         fallback = clash._group_by_name(merged, "漏网之鱼")
         self.assertEqual(fallback["proxies"][0], "DIRECT")
-        self.assertEqual(fallback["default-selected"], "DIRECT")
+        self.assertNotIn("default-selected", fallback)
 
         self.assertEqual(
             merged["rule-providers"]["Apple"]["path"],
@@ -123,12 +140,12 @@ class MergeTests(unittest.TestCase):
 
     def test_custom_rules_precede_subscription_rules(self):
         merged = clash.apply_customizations(sample_config(), self.rule_sets)
-        expected = [
-            f"RULE-SET,{rule_set['name']},{rule_set['target']}"
-            for rule_set in self.rule_sets
-        ]
+        expected = clash._expand_custom_rules(self.rule_sets)
         self.assertEqual(merged["rules"][: len(expected)], expected)
         self.assertEqual(merged["rules"][-1], "MATCH,漏网之鱼")
+        self.assertFalse(
+            any(name.startswith("Custom-") for name in merged["rule-providers"])
+        )
 
     def test_merge_is_idempotent(self):
         once = clash.apply_customizations(sample_config(), self.rule_sets)
@@ -137,10 +154,35 @@ class MergeTests(unittest.TestCase):
 
     def test_ai_filter_matches_only_forbidden_or_informational_nodes(self):
         pattern = re.compile(clash.AI_EXCLUDE_FILTER)
-        for name in ["🇭🇰 香港-01", "台湾家庭宽带", "Expire: 2099-01-01", "官网"]:
+        for name in [
+            "🇭🇰 香港-01",
+            "台湾家庭宽带",
+            "Expire: 2099-01-01",
+            "剩余流量：1 TB",
+            "官网",
+        ]:
             self.assertRegex(name, pattern)
         for name in ["🇺🇸 美国-01", "🇩🇪 德国-01", "Shadowsocks-Moscow"]:
             self.assertNotRegex(name, pattern)
+
+
+class ScriptGenerationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.rule_sets = clash.load_rule_sets()
+
+    def test_script_is_generated_without_subscription_or_secrets(self):
+        script = clash.render_override_script(self.rule_sets)
+        self.assertIn("function main(config)", script)
+        self.assertIn('"DOMAIN,scholar.google.com,学术搜索"', script)
+        self.assertNotIn("__CUSTOM_RULES_JSON__", script)
+        self.assertNotIn("proxy-providers:", script)
+
+    def test_atomic_text_writer_round_trips_unicode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "override.js"
+            clash.write_text_atomic(target, "const group = '学术搜索';\n")
+            self.assertEqual(target.read_text(encoding="utf-8"), "const group = '学术搜索';\n")
 
 
 if __name__ == "__main__":

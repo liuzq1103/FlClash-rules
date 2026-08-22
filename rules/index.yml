@@ -6,6 +6,9 @@ rule-sets:
   - name: Custom-AI
     file: ai.yaml
     target: Ai+
+  - name: Custom-Scholar
+    file: scholar.yaml
+    target: 学术搜索
   - name: Custom-Academic
     file: academic.yaml
     target: DIRECT

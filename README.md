@@ -1,8 +1,8 @@
 # FlClash 个性化分流规则
 
-本项目把机场订阅当作动态节点源，把个人规则编译成 Clash Verge Rev 的**订阅级扩展脚本**。客户端每次更新订阅后都会基于最新节点重新生成策略组，不再复制或长期保存一份容易失效的完整配置。
+本项目把机场订阅当作动态节点源，把个人规则编译成 Clash Verge Rev / FlClash 可共用的 **JavaScript 扩展脚本**。客户端每次更新订阅后都会基于最新节点重新生成策略组，不复制、不保存完整订阅配置。
 
-> 主客户端推荐 Clash Verge Rev。FlClash 可作为备用，但不要使用“自定义覆写 → 一键填入”保存整套节点和策略组；节点名称变化后，这种静态覆写容易失效。
+> 主客户端推荐 Clash Verge Rev。FlClash 使用“脚本”覆写模式；不要使用“自定义 → 一键填入”保存整套节点和策略组，后者是静态副本，节点名称变化后容易失效。
 
 ## 工作方式
 
@@ -39,9 +39,6 @@ FlClash/
 │   └── override.js     # 生成后粘贴到客户端
 ├── tests/
 ├── .github/workflows/validate.yml
-└── local/              # Git 忽略：订阅和应急输出
-    ├── gw树洞.yaml
-    └── output/
 ```
 
 ## 首次部署到 Clash Verge Rev
@@ -64,6 +61,21 @@ python clash.py --check
 5. 启用订阅后，在 `Ai稳定选择` 中固定一个可正常打开 ChatGPT 的非港澳台节点；`Ai+` 和 `学术搜索` 会共同使用它。
 
 如果扩展后出现网络异常，直接禁用这条订阅的扩展脚本即可恢复原始订阅。
+
+## 部署到 FlClash
+
+`dist/override.js` 使用标准的 `function main(config) { ... return config; }` 入口，可直接作为 FlClash 的覆写脚本使用：
+
+1. 打开“配置”，进入当前订阅的“更多 → 覆写”。
+2. 覆写模式选择 **脚本**，不要选择“标准”或“自定义”。
+3. 新建脚本，例如命名为 `FlClash 个性化规则`，粘贴 `dist/override.js` 全文并保存。
+4. 回到该订阅，在“覆写脚本”中选中刚创建的脚本。
+5. 点“预览”，确认存在 `Ai稳定选择`、`Ai测速备用`、`学术搜索`、`学术访问`，并确认最后一条仍为原订阅的 `MATCH`。
+6. 启用该订阅；在 `Ai稳定选择` 选择可用的非港澳台节点，在 `学术访问` 选择 `DIRECT`。
+
+FlClash 的脚本是与订阅关联的，不要只在“工具 → 进阶配置 → 脚本”中保存后就结束；必须回到订阅覆写页面选中它。订阅更新后脚本会重新应用，不需要重新粘贴。
+
+如果脚本模式导致“代理/规则”页面消失或预览失败，先取消关联脚本即可恢复原订阅；这属于部分 FlClash 版本的脚本模式兼容问题，不要改用静态“自定义”覆写。Windows 端优先升级到最新稳定版；仍异常时继续使用 Clash Verge Rev。
 
 ## 策略组
 
@@ -183,13 +195,9 @@ node --test tests/*.js
 
 ```text
 python clash.py                         生成 dist/override.js
-python clash.py --check                 检查规则、生成物；本地订阅存在时兼容性检查
+python clash.py --check                 检查规则和生成物是否一致
 python clash.py --check-rules           只检查 rules/，不读取订阅
-python clash.py --legacy-merge          应急生成 local/output/merged_gw树洞.yaml
-python clash.py --legacy-merge x.yaml   应急处理指定订阅
 ```
-
-完整合并 YAML 只用于诊断和应急，不作为日常导入方式。
 
 ## GitHub 同步与隐私
 

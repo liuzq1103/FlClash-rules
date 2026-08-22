@@ -15,9 +15,6 @@ RULES_DIR = BASE_DIR / "rules"
 RULES_INDEX = RULES_DIR / "index.yml"
 TEMPLATE_PATH = BASE_DIR / "templates" / "override.js.tpl"
 DEFAULT_SCRIPT_OUTPUT = BASE_DIR / "dist" / "override.js"
-DEFAULT_SOURCE = BASE_DIR / "local" / "gw树洞.yaml"
-DEFAULT_OUTPUT_DIR = BASE_DIR / "local" / "output"
-OUTPUT_PREFIX = "merged_"
 
 AI_GROUP = "Ai+"
 AI_STABLE_GROUP = "Ai稳定选择"
@@ -494,29 +491,6 @@ def validate_config(config, rule_sets):
         raise ConfigError(f"{FALLBACK_GROUP} must list DIRECT first")
 
 
-def write_yaml_atomic(output_path, data):
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            encoding="utf-8",
-            dir=str(output_path.parent),
-            prefix=f".{output_path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            temp_path = Path(handle.name)
-            yaml.safe_dump(data, handle, allow_unicode=True, sort_keys=False)
-
-        load_yaml(temp_path)
-        os.replace(str(temp_path), str(output_path))
-    finally:
-        if temp_path and temp_path.exists():
-            temp_path.unlink()
-
-
 def write_text_atomic(output_path, text):
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -563,11 +537,6 @@ def build_argument_parser():
         description="Build a Clash Verge Rev subscription extension from maintainable rules."
     )
     parser.add_argument(
-        "source",
-        nargs="?",
-        help=f"subscription YAML for --legacy-merge (default: {DEFAULT_SOURCE})",
-    )
-    parser.add_argument(
         "--check",
         action="store_true",
         help="validate the rules and source subscription without writing output",
@@ -576,11 +545,6 @@ def build_argument_parser():
         "--check-rules",
         action="store_true",
         help="validate only the tracked rule files (used by GitHub Actions)",
-    )
-    parser.add_argument(
-        "--legacy-merge",
-        action="store_true",
-        help="emergency fallback: generate a complete merged YAML",
     )
     return parser
 
@@ -594,33 +558,13 @@ def main(argv=None):
             print(f"Rule validation passed: {len(rule_sets)} sets, {rule_count} rules")
             return 0
 
-        if args.source and not args.legacy_merge:
-            raise ConfigError("a subscription path is only valid with --legacy-merge")
-
         script = render_override_script(rule_sets)
         if args.check:
             if not DEFAULT_SCRIPT_OUTPUT.is_file():
                 raise ConfigError(f"generated extension is missing: {DEFAULT_SCRIPT_OUTPUT}")
             if DEFAULT_SCRIPT_OUTPUT.read_text(encoding="utf-8") != script:
                 raise ConfigError("dist/override.js is stale; run: python clash.py")
-            compatibility = ""
-            if DEFAULT_SOURCE.is_file():
-                apply_customizations(load_yaml(DEFAULT_SOURCE), rule_sets)
-                compatibility = "; local subscription compatible"
-            print(f"Extension validation passed: {rule_count} rules{compatibility}")
-            return 0
-
-        if args.legacy_merge:
-            source_path = Path(args.source).resolve() if args.source else DEFAULT_SOURCE
-            if not source_path.is_file():
-                raise ConfigError(
-                    f"subscription not found: {source_path}\n"
-                    f"Place it at {DEFAULT_SOURCE} or pass a path after --legacy-merge."
-                )
-            merged = apply_customizations(load_yaml(source_path), rule_sets)
-            output_path = DEFAULT_OUTPUT_DIR / f"{OUTPUT_PREFIX}{source_path.name}"
-            write_yaml_atomic(output_path, merged)
-            print(f"Emergency merged configuration saved to: {output_path}")
+            print(f"Extension validation passed: {rule_count} rules")
             return 0
 
         write_text_atomic(DEFAULT_SCRIPT_OUTPUT, script)

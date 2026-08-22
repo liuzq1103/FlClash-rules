@@ -106,7 +106,7 @@ class RuleLoadingTests(unittest.TestCase):
             ["DOMAIN,scholar.google.com", "DOMAIN,scholar.google.com.hk"],
         )
 
-    def test_cloudflare_challenge_sites_share_ai_route(self):
+    def test_academic_sites_use_direct_first_switchable_route(self):
         by_target = {
             target: {
                 rule
@@ -116,16 +116,16 @@ class RuleLoadingTests(unittest.TestCase):
             }
             for target in {rule_set["target"] for rule_set in self.rule_sets}
         }
-        coherent = {
-            "DOMAIN-SUFFIX,challenges.cloudflare.com",
+        switchable = {
             "DOMAIN-SUFFIX,science.org",
             "DOMAIN-SUFFIX,pnas.org",
             "DOMAIN-SUFFIX,oup.com",
             "DOMAIN-SUFFIX,tandfonline.com",
             "DOMAIN-SUFFIX,cell.com",
         }
-        self.assertTrue(coherent.issubset(by_target["Ai+"]))
-        self.assertTrue(coherent.isdisjoint(by_target["DIRECT"]))
+        self.assertTrue(switchable.issubset(by_target["学术访问"]))
+        self.assertTrue(switchable.isdisjoint(by_target["Ai+"]))
+        self.assertIn("DOMAIN-SUFFIX,challenges.cloudflare.com", by_target["Ai+"])
 
     def test_chatgpt_core_is_owned_by_custom_ai_rules(self):
         ai_payload = {
@@ -154,7 +154,7 @@ class RuleLoadingTests(unittest.TestCase):
                 "rule-sets:\n"
                 "  - name: Custom-Site\n"
                 "    file: site.yaml\n"
-                "    target: DIRECT\n"
+                "    target: 学术访问\n"
                 "route-constraints:\n"
                 "  - name: affinity\n"
                 "    target: Ai+\n"
@@ -162,7 +162,7 @@ class RuleLoadingTests(unittest.TestCase):
                 "      - DOMAIN-SUFFIX,science.org\n",
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(clash.ConfigError, "requires.*Ai.*found DIRECT"):
+            with self.assertRaisesRegex(clash.ConfigError, "requires.*Ai.*found 学术访问"):
                 clash.load_rule_sets(index)
 
 
@@ -197,6 +197,9 @@ class MergeTests(unittest.TestCase):
         scholar = clash._group_by_name(merged, "学术搜索")
         self.assertEqual(scholar["proxies"], ["Ai稳定选择", "Ai测速备用"])
 
+        academic = clash._group_by_name(merged, "学术访问")
+        self.assertEqual(academic["proxies"], ["DIRECT", "Ai+"])
+
         fallback = clash._group_by_name(merged, "漏网之鱼")
         self.assertEqual(fallback["proxies"][0], "DIRECT")
         self.assertNotIn("default-selected", fallback)
@@ -212,6 +215,8 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(merged["rules"][: len(expected)], expected)
         self.assertEqual(merged["rules"][-1], "MATCH,漏网之鱼")
         self.assertNotIn("DOMAIN-SUFFIX,science.org,DIRECT", merged["rules"])
+        self.assertIn("DOMAIN-SUFFIX,science.org,学术访问", merged["rules"])
+        self.assertNotIn("DOMAIN-SUFFIX,science.org,Ai+", merged["rules"])
         self.assertNotIn("RULE-SET,Custom-Academic,DIRECT", merged["rules"])
         self.assertFalse(
             any(name.startswith("Custom-") for name in merged["rule-providers"])
@@ -245,6 +250,7 @@ class ScriptGenerationTests(unittest.TestCase):
         script = clash.render_override_script(self.rule_sets)
         self.assertIn("function main(config)", script)
         self.assertIn('"DOMAIN,scholar.google.com,学术搜索"', script)
+        self.assertIn('"DOMAIN-SUFFIX,science.org,学术访问"', script)
         self.assertNotIn("__CUSTOM_RULES_JSON__", script)
         self.assertNotIn("proxy-providers:", script)
 

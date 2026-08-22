@@ -81,14 +81,16 @@ test("extension creates safe dynamic groups and preserves global auto group", ()
     "Ai稳定选择",
     "Ai测速备用",
   ]);
+  assert.deepEqual(plain(byName("学术访问").proxies), ["DIRECT", "Ai+"]);
   assert.equal(byName("漏网之鱼").proxies[0], "DIRECT");
   assert.deepEqual(plain(byName("自动选择")), originalAuto);
   assert.equal(result["rule-providers"].Apple.path, "./providers/rule/Apple.yaml");
   assert.equal(result.rules[0], "DOMAIN-SUFFIX,doubleclick.net,REJECT");
   assert.ok(result.rules.includes("DOMAIN,scholar.google.com,学术搜索"));
-  assert.ok(result.rules.includes("DOMAIN-SUFFIX,science.org,Ai+"));
+  assert.ok(result.rules.includes("DOMAIN-SUFFIX,science.org,学术访问"));
   assert.ok(result.rules.includes("DOMAIN-SUFFIX,challenges.cloudflare.com,Ai+"));
   assert.ok(!result.rules.includes("DOMAIN-SUFFIX,science.org,DIRECT"));
+  assert.ok(!result.rules.includes("DOMAIN-SUFFIX,science.org,Ai+"));
   assert.ok(!result.rules.includes("RULE-SET,Custom-Academic,DIRECT"));
   assert.equal(result.rules.at(-1), "MATCH,漏网之鱼");
 });

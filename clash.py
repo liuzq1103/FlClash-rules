@@ -24,6 +24,7 @@ AI_STABLE_GROUP = "Ai稳定选择"
 AI_AUTO_GROUP = "Ai测速备用"
 LEGACY_AI_AUTO_GROUP = "Ai自动选择"
 SCHOLAR_GROUP = "学术搜索"
+ACADEMIC_GROUP = "学术访问"
 FALLBACK_GROUP = "漏网之鱼"
 CUSTOM_PROVIDER_PREFIX = "Custom-"
 
@@ -88,7 +89,11 @@ def _parse_payload_rule(rule, source_label):
         raise ConfigError(f"{source_label}: unsupported rule type {rule_type}: {rule}")
     if not parts[1]:
         raise ConfigError(f"{source_label}: empty rule value: {rule}")
-    if any(part in BUILTIN_TARGETS or part in {AI_GROUP, FALLBACK_GROUP} for part in parts[2:]):
+    if any(
+        part in BUILTIN_TARGETS
+        or part in {AI_GROUP, SCHOLAR_GROUP, ACADEMIC_GROUP, FALLBACK_GROUP}
+        for part in parts[2:]
+    ):
         raise ConfigError(
             f"{source_label}: provider payload must not contain a policy target: {rule}"
         )
@@ -251,7 +256,13 @@ def configure_ai_groups(config):
         group
         for group in groups
         if group.get("name")
-        not in {AI_STABLE_GROUP, AI_AUTO_GROUP, LEGACY_AI_AUTO_GROUP, SCHOLAR_GROUP}
+        not in {
+            AI_STABLE_GROUP,
+            AI_AUTO_GROUP,
+            LEGACY_AI_AUTO_GROUP,
+            SCHOLAR_GROUP,
+            ACADEMIC_GROUP,
+        }
     ]
     ai_index = groups.index(ai_group)
 
@@ -293,7 +304,12 @@ def configure_ai_groups(config):
         "type": "select",
         "proxies": [AI_STABLE_GROUP, AI_AUTO_GROUP],
     }
-    groups[ai_index:ai_index] = [ai_stable, ai_auto, scholar]
+    academic = {
+        "name": ACADEMIC_GROUP,
+        "type": "select",
+        "proxies": ["DIRECT", AI_GROUP],
+    }
+    groups[ai_index:ai_index] = [ai_stable, ai_auto, scholar, academic]
 
     # Explicit node lists avoid runtime compatibility problems in FlClash
     # versions that display newer dynamic fields but do not preserve them.
@@ -462,6 +478,7 @@ def validate_config(config, rule_sets):
     ai_auto = _group_by_name(config, AI_AUTO_GROUP)
     ai_group = _group_by_name(config, AI_GROUP)
     scholar = _group_by_name(config, SCHOLAR_GROUP)
+    academic = _group_by_name(config, ACADEMIC_GROUP)
     fallback = _group_by_name(config, FALLBACK_GROUP)
     if not ai_stable or not ai_stable.get("proxies"):
         raise ConfigError(f"{AI_STABLE_GROUP} must contain explicit proxy nodes")
@@ -471,6 +488,8 @@ def validate_config(config, rule_sets):
         raise ConfigError(f"{AI_GROUP} must prefer stable selection and keep auto as backup")
     if not scholar or scholar.get("proxies") != [AI_STABLE_GROUP, AI_AUTO_GROUP]:
         raise ConfigError(f"{SCHOLAR_GROUP} must share the stable AI exit")
+    if not academic or academic.get("proxies") != ["DIRECT", AI_GROUP]:
+        raise ConfigError(f"{ACADEMIC_GROUP} must prefer DIRECT and keep {AI_GROUP} as backup")
     if not fallback or fallback.get("proxies", [None])[0] != "DIRECT":
         raise ConfigError(f"{FALLBACK_GROUP} must list DIRECT first")
 

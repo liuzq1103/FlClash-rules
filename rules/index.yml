@@ -11,7 +11,7 @@ rule-sets:
     target: 学术搜索
   - name: Custom-Academic
     file: academic.yaml
-    target: DIRECT
+    target: 学术访问
   - name: Custom-Tailscale
     file: tailscale.yaml
     target: DIRECT
@@ -19,22 +19,23 @@ rule-sets:
     file: direct.yaml
     target: DIRECT
 
-# These related requests must use one policy group. Moving only the main site
-# back to DIRECT would split Cloudflare's session across different exit IPs.
+# ChatGPT and the shared Cloudflare verification endpoint must stay on Ai+.
+# Academic sites use a separate DIRECT-first selector so a temporary challenge
+# can be handled by switching only 学术访问 to Ai+.
 route-constraints:
-  - name: cloudflare-session-affinity
+  - name: chatgpt-cloudflare-route
     target: Ai+
     rules:
       - DOMAIN-SUFFIX,challenges.cloudflare.com
+      - DOMAIN-SUFFIX,chatgpt.com
+      - DOMAIN-SUFFIX,openai.com
+      - DOMAIN-SUFFIX,oaistatic.com
+      - DOMAIN-SUFFIX,oaiusercontent.com
+  - name: academic-direct-with-proxy-backup
+    target: 学术访问
+    rules:
       - DOMAIN-SUFFIX,science.org
       - DOMAIN-SUFFIX,pnas.org
       - DOMAIN-SUFFIX,oup.com
       - DOMAIN-SUFFIX,tandfonline.com
       - DOMAIN-SUFFIX,cell.com
-  - name: chatgpt-core
-    target: Ai+
-    rules:
-      - DOMAIN-SUFFIX,chatgpt.com
-      - DOMAIN-SUFFIX,openai.com
-      - DOMAIN-SUFFIX,oaistatic.com
-      - DOMAIN-SUFFIX,oaiusercontent.com

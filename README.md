@@ -60,7 +60,7 @@ python clash.py --check
 1. 在 Clash Verge Rev 中保留并更新原始 `gw树洞.yaml` 订阅。
 2. 给这条订阅配置“扩展脚本”，粘贴 `dist/override.js` 的完整内容。
 3. 不要把脚本放到“全局扩展脚本”；全局扩展配置也保持为空。
-4. 先使用“预览”确认存在 `Ai稳定选择`、`Ai测速备用`、`学术搜索`，且规则仍以原订阅的 `MATCH` 结束。
+4. 先使用“预览”确认存在 `Ai稳定选择`、`Ai测速备用`、`学术搜索`、`学术访问`，且规则仍以原订阅的 `MATCH` 结束。
 5. 启用订阅后，在 `Ai稳定选择` 中固定一个可正常打开 ChatGPT 的非港澳台节点；`Ai+` 和 `学术搜索` 会共同使用它。
 
 如果扩展后出现网络异常，直接禁用这条订阅的扩展脚本即可恢复原始订阅。
@@ -89,6 +89,17 @@ python clash.py --check
 
 仅接管 `scholar.google.com` 和 `scholar.google.com.hk`，并与 `Ai+` 共用 `Ai稳定选择`，避免搜索过程中频繁切换出口 IP。普通 Google 和 YouTube 沿用订阅策略。
 
+### `学术访问`
+
+接管 `rules/academic.yaml` 中的出版社和期刊平台，固定提供两个选项：
+
+1. `DIRECT`（默认）：保留本地或机构公网 IP，适用于 Science、Oxford、Elsevier 等订阅识别场景。
+2. `Ai+`（备用）：直连遇到地区限制、连接失败或 Cloudflare 验证循环时一键切换。
+
+这是人工 `select`，不会因一次 HTTP 状态码或延迟波动自行改变出口。Mihomo 的自动健康检查没有浏览器 Cookie，而 Science 的无 Cookie 请求可能直接返回 Cloudflare `403`，用它做自动切换会把“可验证访问”误判为“线路不可用”。
+
+`challenges.cloudflare.com` 是多个网站共用的验证域名，规则引擎无法知道它来自 ChatGPT 还是 Science，因此继续固定走 `Ai+` 以保护 ChatGPT。平时 `学术访问` 保持 `DIRECT`；若 Science 出现验证循环，将 `学术访问` 切到 `Ai+` 后刷新，主站与验证请求便会使用同一代理出口。这个切换不影响 Tailscale、普通 Google 或其他直连规则。
+
 ## 规则优先级
 
 `rules/index.yml` 从上到下就是最终优先级：
@@ -96,7 +107,7 @@ python clash.py --check
 1. 广告 `REJECT`
 2. AI/开发服务 `Ai+`
 3. Google Scholar `学术搜索`
-4. 已确认学术平台 `DIRECT`
+4. 已确认学术平台 `学术访问`（默认 `DIRECT`，`Ai+` 备用）
 5. Tailscale `DIRECT`
 6. 其他明确直连 `DIRECT`
 7. 原始订阅规则
@@ -107,7 +118,7 @@ AI 规则高于宽泛直连规则，例如 Copilot 会先进入 `Ai+`，之后 M
 
 分类文件使用 Mihomo classical payload，只写匹配条件，目标策略由 `index.yml` 管理。
 
-添加学术直连：
+添加优先直连、必要时可一键代理的学术站：
 
 ```yaml
 # rules/academic.yaml
@@ -123,7 +134,7 @@ payload:
   - DOMAIN-SUFFIX,special-research.example
 ```
 
-如果网站返回 Cloudflare Challenge，主站和 `challenges.cloudflare.com` 必须使用同一策略。此类学术域名应加入 `rules/ai.yaml`，并在 `rules/index.yml` 的 `cloudflare-session-affinity` 约束中登记；不要只把主站放进 `academic.yaml` 直连。校验器会在相关规则被移动到不同策略时直接报错。
+如果新增学术站偶尔出现 Cloudflare Challenge，仍放在 `academic.yaml`，先保持 `学术访问 = DIRECT`；验证循环时临时切换 `学术访问 = Ai+`。只有明确要求长期使用代理、且不依赖本地机构 IP 的科研服务才加入 `ai.yaml`。
 
 修改 Tailscale：
 
@@ -165,7 +176,7 @@ node --test tests/*.js
 - 修复原订阅 `Apple` 与 `AppleDev` provider 缓存路径冲突。
 - `漏网之鱼` 将 `DIRECT` 放在第一项，但保留原有其他选择。
 - ChatGPT 核心域名由本项目明确接管，不再完全依赖订阅的远程 OpenAI provider。
-- 实测会触发 Cloudflare Challenge 的 Science、PNAS、Oxford Academic、Taylor & Francis 和 Cell 改走 `Ai+`，与验证资源保持同一出口。
+- Science、PNAS、Oxford Academic、Taylor & Francis 和 Cell 改为 `学术访问`：默认恢复直连和机构 IP，需要处理 Cloudflare Challenge 时可一键切到 `Ai+`，不再永久占用代理出口。
 - 原 `Ai自动选择` 被替换为“人工稳定出口优先、ChatGPT 测速备用”，避免只因 Google 延迟变化切换 AI 公网 IP。
 
 ## 命令

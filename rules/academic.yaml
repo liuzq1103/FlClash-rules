@@ -1,5 +1,11 @@
 payload:
   # Publishers and journal platforms that should use the local/institutional route
+  # The generated 学术访问 group prefers DIRECT and offers Ai+ as a one-click backup.
+  - DOMAIN-SUFFIX,science.org
+  - DOMAIN-SUFFIX,pnas.org
+  - DOMAIN-SUFFIX,oup.com
+  - DOMAIN-SUFFIX,tandfonline.com
+  - DOMAIN-SUFFIX,cell.com
   - DOMAIN-SUFFIX,wiley.com
   - DOMAIN-SUFFIX,nature.com
   - DOMAIN-SUFFIX,springer.com

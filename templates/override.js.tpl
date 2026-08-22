@@ -7,6 +7,7 @@ const AI_STABLE_GROUP = "Ai稳定选择";
 const AI_AUTO_GROUP = "Ai测速备用";
 const LEGACY_AI_AUTO_GROUP = "Ai自动选择";
 const SCHOLAR_GROUP = "学术搜索";
+const ACADEMIC_GROUP = "学术访问";
 const FALLBACK_GROUP = "漏网之鱼";
 
 // Bound short country codes to avoid matching ordinary words that contain hk/mo/tw.
@@ -61,6 +62,7 @@ function configureGroups(config) {
       AI_AUTO_GROUP,
       LEGACY_AI_AUTO_GROUP,
       SCHOLAR_GROUP,
+      ACADEMIC_GROUP,
     ].includes(group.name),
   );
   const aiIndex = config["proxy-groups"].findIndex((group) => group.name === AI_GROUP);
@@ -87,7 +89,12 @@ function configureGroups(config) {
     type: "select",
     proxies: [AI_STABLE_GROUP, AI_AUTO_GROUP],
   };
-  config["proxy-groups"].splice(aiIndex, 0, aiStable, aiAuto, scholar);
+  const academic = {
+    name: ACADEMIC_GROUP,
+    type: "select",
+    proxies: ["DIRECT", AI_GROUP],
+  };
+  config["proxy-groups"].splice(aiIndex, 0, aiStable, aiAuto, scholar, academic);
 
   ai.proxies = [AI_STABLE_GROUP, AI_AUTO_GROUP];
   for (const key of [
@@ -155,6 +162,7 @@ function validateResult(config) {
     AI_AUTO_GROUP,
     AI_GROUP,
     SCHOLAR_GROUP,
+    ACADEMIC_GROUP,
     FALLBACK_GROUP,
   ]) {
     if (!names.includes(required)) throw new Error(`generated group is missing: ${required}`);
@@ -171,6 +179,10 @@ function validateResult(config) {
   if (JSON.stringify(groupByName(config, SCHOLAR_GROUP).proxies) !==
       JSON.stringify(expectedAiChoices)) {
     throw new Error("academic search does not share the stable AI exit");
+  }
+  if (JSON.stringify(groupByName(config, ACADEMIC_GROUP).proxies) !==
+      JSON.stringify(["DIRECT", AI_GROUP])) {
+    throw new Error("academic access does not prefer DIRECT with Ai+ backup");
   }
   if (groupByName(config, FALLBACK_GROUP).proxies[0] !== "DIRECT") {
     throw new Error("漏网之鱼 does not prefer DIRECT");

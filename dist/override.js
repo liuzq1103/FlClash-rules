@@ -12,11 +12,6 @@ const CUSTOM_RULES = [
   "DOMAIN-SUFFIX,oaiusercontent.com,Ai+",
   "DOMAIN-SUFFIX,oaistatsig.com,Ai+",
   "DOMAIN-SUFFIX,challenges.cloudflare.com,Ai+",
-  "DOMAIN-SUFFIX,science.org,Ai+",
-  "DOMAIN-SUFFIX,pnas.org,Ai+",
-  "DOMAIN-SUFFIX,oup.com,Ai+",
-  "DOMAIN-SUFFIX,tandfonline.com,Ai+",
-  "DOMAIN-SUFFIX,cell.com,Ai+",
   "DOMAIN-SUFFIX,ncbi.nlm.nih.gov,Ai+",
   "DOMAIN-SUFFIX,sagepub.com,Ai+",
   "DOMAIN,gene-structure.vercel.app,Ai+",
@@ -49,24 +44,29 @@ const CUSTOM_RULES = [
   "DOMAIN-SUFFIX,intercom.io,Ai+",
   "DOMAIN,scholar.google.com,学术搜索",
   "DOMAIN,scholar.google.com.hk,学术搜索",
-  "DOMAIN-SUFFIX,wiley.com,DIRECT",
-  "DOMAIN-SUFFIX,nature.com,DIRECT",
-  "DOMAIN-SUFFIX,springer.com,DIRECT",
-  "DOMAIN-SUFFIX,springernature.com,DIRECT",
-  "DOMAIN-SUFFIX,acs.org,DIRECT",
-  "DOMAIN-SUFFIX,ieee.org,DIRECT",
-  "DOMAIN-SUFFIX,aps.org,DIRECT",
-  "DOMAIN-SUFFIX,taylorandfrancis.com,DIRECT",
-  "DOMAIN-SUFFIX,webofscience.com,DIRECT",
-  "DOMAIN-SUFFIX,webofknowledge.com,DIRECT",
-  "DOMAIN-SUFFIX,clarivate.com,DIRECT",
-  "DOMAIN-SUFFIX,scopus.com,DIRECT",
-  "DOMAIN-SUFFIX,sciencedirect.com,DIRECT",
-  "DOMAIN-SUFFIX,sciencedirectassets.com,DIRECT",
-  "DOMAIN-SUFFIX,els-cdn.com,DIRECT",
-  "DOMAIN-SUFFIX,elsevier.com,DIRECT",
-  "DOMAIN-SUFFIX,cellchat.org,DIRECT",
-  "DOMAIN-SUFFIX,cancerserumatlas.com,DIRECT",
+  "DOMAIN-SUFFIX,science.org,学术访问",
+  "DOMAIN-SUFFIX,pnas.org,学术访问",
+  "DOMAIN-SUFFIX,oup.com,学术访问",
+  "DOMAIN-SUFFIX,tandfonline.com,学术访问",
+  "DOMAIN-SUFFIX,cell.com,学术访问",
+  "DOMAIN-SUFFIX,wiley.com,学术访问",
+  "DOMAIN-SUFFIX,nature.com,学术访问",
+  "DOMAIN-SUFFIX,springer.com,学术访问",
+  "DOMAIN-SUFFIX,springernature.com,学术访问",
+  "DOMAIN-SUFFIX,acs.org,学术访问",
+  "DOMAIN-SUFFIX,ieee.org,学术访问",
+  "DOMAIN-SUFFIX,aps.org,学术访问",
+  "DOMAIN-SUFFIX,taylorandfrancis.com,学术访问",
+  "DOMAIN-SUFFIX,webofscience.com,学术访问",
+  "DOMAIN-SUFFIX,webofknowledge.com,学术访问",
+  "DOMAIN-SUFFIX,clarivate.com,学术访问",
+  "DOMAIN-SUFFIX,scopus.com,学术访问",
+  "DOMAIN-SUFFIX,sciencedirect.com,学术访问",
+  "DOMAIN-SUFFIX,sciencedirectassets.com,学术访问",
+  "DOMAIN-SUFFIX,els-cdn.com,学术访问",
+  "DOMAIN-SUFFIX,elsevier.com,学术访问",
+  "DOMAIN-SUFFIX,cellchat.org,学术访问",
+  "DOMAIN-SUFFIX,cancerserumatlas.com,学术访问",
   "DOMAIN-SUFFIX,tailscale.com,DIRECT",
   "DOMAIN-SUFFIX,tailscale.io,DIRECT",
   "DOMAIN-SUFFIX,ts.net,DIRECT",
@@ -131,6 +131,7 @@ const AI_STABLE_GROUP = "Ai稳定选择";
 const AI_AUTO_GROUP = "Ai测速备用";
 const LEGACY_AI_AUTO_GROUP = "Ai自动选择";
 const SCHOLAR_GROUP = "学术搜索";
+const ACADEMIC_GROUP = "学术访问";
 const FALLBACK_GROUP = "漏网之鱼";
 
 // Bound short country codes to avoid matching ordinary words that contain hk/mo/tw.
@@ -185,6 +186,7 @@ function configureGroups(config) {
       AI_AUTO_GROUP,
       LEGACY_AI_AUTO_GROUP,
       SCHOLAR_GROUP,
+      ACADEMIC_GROUP,
     ].includes(group.name),
   );
   const aiIndex = config["proxy-groups"].findIndex((group) => group.name === AI_GROUP);
@@ -211,7 +213,12 @@ function configureGroups(config) {
     type: "select",
     proxies: [AI_STABLE_GROUP, AI_AUTO_GROUP],
   };
-  config["proxy-groups"].splice(aiIndex, 0, aiStable, aiAuto, scholar);
+  const academic = {
+    name: ACADEMIC_GROUP,
+    type: "select",
+    proxies: ["DIRECT", AI_GROUP],
+  };
+  config["proxy-groups"].splice(aiIndex, 0, aiStable, aiAuto, scholar, academic);
 
   ai.proxies = [AI_STABLE_GROUP, AI_AUTO_GROUP];
   for (const key of [
@@ -279,6 +286,7 @@ function validateResult(config) {
     AI_AUTO_GROUP,
     AI_GROUP,
     SCHOLAR_GROUP,
+    ACADEMIC_GROUP,
     FALLBACK_GROUP,
   ]) {
     if (!names.includes(required)) throw new Error(`generated group is missing: ${required}`);
@@ -295,6 +303,10 @@ function validateResult(config) {
   if (JSON.stringify(groupByName(config, SCHOLAR_GROUP).proxies) !==
       JSON.stringify(expectedAiChoices)) {
     throw new Error("academic search does not share the stable AI exit");
+  }
+  if (JSON.stringify(groupByName(config, ACADEMIC_GROUP).proxies) !==
+      JSON.stringify(["DIRECT", AI_GROUP])) {
+    throw new Error("academic access does not prefer DIRECT with Ai+ backup");
   }
   if (groupByName(config, FALLBACK_GROUP).proxies[0] !== "DIRECT") {
     throw new Error("漏网之鱼 does not prefer DIRECT");

@@ -106,6 +106,25 @@ class RuleLoadingTests(unittest.TestCase):
             ["DOMAIN,scholar.google.com", "DOMAIN,scholar.google.com.hk"],
         )
 
+    def test_gemini_shared_session_endpoints_keep_one_ai_exit(self):
+        ai_payload = {
+            rule
+            for rule_set in self.rule_sets
+            if rule_set["target"] == "Ai+"
+            for rule in rule_set["payload"]
+        }
+        self.assertTrue(
+            {
+                "DOMAIN-SUFFIX,gemini.google.com",
+                "DOMAIN,google.com",
+                "DOMAIN,www.google.com",
+                "DOMAIN,accounts.google.com",
+                "DOMAIN,apis.google.com",
+                "DOMAIN,ogs.google.com",
+            }.issubset(ai_payload)
+        )
+        self.assertNotIn("DOMAIN-SUFFIX,google.com", ai_payload)
+
     def test_academic_sites_use_direct_first_switchable_route(self):
         by_target = {
             target: {
@@ -250,6 +269,9 @@ class ScriptGenerationTests(unittest.TestCase):
         script = clash.render_override_script(self.rule_sets)
         self.assertIn("function main(config)", script)
         self.assertIn('"DOMAIN,scholar.google.com,学术搜索"', script)
+        self.assertIn('"DOMAIN,google.com,Ai+"', script)
+        self.assertIn('"DOMAIN,accounts.google.com,Ai+"', script)
+        self.assertNotIn('"DOMAIN-SUFFIX,google.com,Ai+"', script)
         self.assertIn('"DOMAIN-SUFFIX,science.org,学术访问"', script)
         self.assertNotIn("__CUSTOM_RULES_JSON__", script)
         self.assertNotIn("proxy-providers:", script)

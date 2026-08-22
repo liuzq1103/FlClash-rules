@@ -87,6 +87,12 @@ test("extension creates safe dynamic groups and preserves global auto group", ()
   assert.equal(result["rule-providers"].Apple.path, "./providers/rule/Apple.yaml");
   assert.equal(result.rules[0], "DOMAIN-SUFFIX,doubleclick.net,REJECT");
   assert.ok(result.rules.includes("DOMAIN,scholar.google.com,学术搜索"));
+  assert.ok(result.rules.includes("DOMAIN,google.com,Ai+"));
+  assert.ok(result.rules.includes("DOMAIN,www.google.com,Ai+"));
+  assert.ok(result.rules.includes("DOMAIN,accounts.google.com,Ai+"));
+  assert.ok(result.rules.includes("DOMAIN,apis.google.com,Ai+"));
+  assert.ok(result.rules.includes("DOMAIN,ogs.google.com,Ai+"));
+  assert.ok(!result.rules.includes("DOMAIN-SUFFIX,google.com,Ai+"));
   assert.ok(result.rules.includes("DOMAIN-SUFFIX,science.org,学术访问"));
   assert.ok(result.rules.includes("DOMAIN-SUFFIX,challenges.cloudflare.com,Ai+"));
   assert.ok(!result.rules.includes("DOMAIN-SUFFIX,science.org,DIRECT"));

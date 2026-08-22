@@ -99,7 +99,9 @@ FlClash 的脚本是与订阅关联的，不要只在“工具 → 进阶配置 
 
 ### `学术搜索`
 
-仅接管 `scholar.google.com` 和 `scholar.google.com.hk`，并与 `Ai+` 共用 `Ai稳定选择`，避免搜索过程中频繁切换出口 IP。普通 Google 和 YouTube 沿用订阅策略。
+仅接管 `scholar.google.com` 和 `scholar.google.com.hk`，并与 `Ai+` 共用 `Ai稳定选择`，避免搜索过程中频繁切换出口 IP。YouTube 和其他未明确列出的 Google 子域仍沿用订阅策略。
+
+Gemini 访问有一项有意的例外：`google.com`、`www.google.com`、`accounts.google.com`、`apis.google.com` 和 `ogs.google.com` 使用 `Ai+`。Gemini 会跳转到其中的登录、初始化或 `google.com/sorry` 风控页面；若这些请求落到订阅的 `Google` 组，就可能与 `gemini.google.com` 使用不同公网 IP，从而触发“异常流量”。这里全部使用精确 `DOMAIN`，没有恢复过宽的 `DOMAIN-SUFFIX,google.com`，因此 Scholar 仍进入 `学术搜索`，YouTube 也不受影响。
 
 ### `学术访问`
 
@@ -184,7 +186,7 @@ node --test tests/*.js
 - Oxford 更新为 `oup.com`；补齐 Elsevier CDN、Springer Nature、Clarivate/Web of Science 依赖。
 - 补齐 Claude、Grok、Copilot、Docker 和 Hugging Face 的当前服务域名。
 - 删除 `DOMAIN-KEYWORD,google`、`216.239.0.0/16`、`example.com`、重复条目和被父域完整覆盖的子域。
-- 广告规则置顶；普通 Google、YouTube 不再被自定义规则整体导向 `Ai+`。
+- 广告规则置顶；没有用后缀规则把整个 Google、YouTube 导向 `Ai+`。仅将 Gemini 必需的 Google 根域、登录和初始化端点固定到同一 AI 出口，避免会话中途更换公网 IP。
 - 修复原订阅 `Apple` 与 `AppleDev` provider 缓存路径冲突。
 - `漏网之鱼` 将 `DIRECT` 放在第一项，但保留原有其他选择。
 - ChatGPT 核心域名由本项目明确接管，不再完全依赖订阅的远程 OpenAI provider。

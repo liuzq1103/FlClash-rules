@@ -16,11 +16,20 @@ payload:
   - DOMAIN,repo-prod.prod.sagebase.org
   - DOMAIN-SUFFIX,alphafoldserver.com
 
-  # Google AI and shared dependencies (ordinary Google remains on subscription rules)
+  # Google AI and the exact shared session endpoints used by Gemini.  The
+  # google.com/sorry redirect, sign-in and app bootstrap must use the same
+  # exit as gemini.google.com; otherwise Google sees an IP change mid-session.
+  # Do not replace these exact matches with DOMAIN-SUFFIX,google.com: Scholar,
+  # YouTube and unrelated Google services must keep their existing policies.
   - DOMAIN-SUFFIX,gemini.google.com
   - DOMAIN-SUFFIX,aistudio.google.com
   - DOMAIN-SUFFIX,bard.google.com
   - DOMAIN-SUFFIX,makersuite.google.com
+  - DOMAIN,google.com
+  - DOMAIN,www.google.com
+  - DOMAIN,accounts.google.com
+  - DOMAIN,apis.google.com
+  - DOMAIN,ogs.google.com
   - DOMAIN-SUFFIX,generativelanguage.googleapis.com
   - DOMAIN-SUFFIX,deepmind.com
   - DOMAIN-SUFFIX,googleapis.com

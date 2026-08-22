@@ -38,6 +38,7 @@ function sampleConfig() {
     proxies,
     "proxy-groups": [
       { name: "手动选择", type: "select", proxies: ["自动选择", ...names] },
+      { name: "Ai自动选择", type: "url-test", proxies: names },
       { name: "Ai+", type: "select", proxies: ["手动选择", ...names] },
       { name: "漏网之鱼", type: "select", proxies: ["手动选择", "DIRECT"] },
       { name: "自动选择", type: "url-test", proxies: names },
@@ -47,7 +48,12 @@ function sampleConfig() {
       Apple: { path: "./providers/rule/AppleDev.yaml" },
       AppleDev: { path: "./providers/rule/AppleDev.yaml" },
     },
-    rules: ["RULE-SET,Google,Google", "MATCH,漏网之鱼"],
+    rules: [
+      "DOMAIN-SUFFIX,science.org,DIRECT",
+      "RULE-SET,Custom-Academic,DIRECT",
+      "RULE-SET,Google,Google",
+      "MATCH,漏网之鱼",
+    ],
   };
 }
 
@@ -62,22 +68,28 @@ test("extension creates safe dynamic groups and preserves global auto group", ()
 
   assert.notStrictEqual(result, config);
   const byName = (name) => result["proxy-groups"].find((group) => group.name === name);
-  assert.deepEqual(plain(byName("Ai自动选择").proxies), ["🇺🇸 美国-01", "🇩🇪 德国-01"]);
+  assert.equal(byName("Ai自动选择"), undefined);
+  assert.deepEqual(plain(byName("Ai稳定选择").proxies), ["🇺🇸 美国-01", "🇩🇪 德国-01"]);
+  assert.deepEqual(plain(byName("Ai测速备用").proxies), ["🇺🇸 美国-01", "🇩🇪 德国-01"]);
+  assert.equal(byName("Ai测速备用").url, "https://chatgpt.com/cdn-cgi/trace");
+  assert.equal(byName("Ai测速备用")["expected-status"], 200);
   assert.deepEqual(plain(byName("Ai+").proxies), [
-    "Ai自动选择",
-    "🇺🇸 美国-01",
-    "🇩🇪 德国-01",
+    "Ai稳定选择",
+    "Ai测速备用",
   ]);
   assert.deepEqual(plain(byName("学术搜索").proxies), [
-    "Ai自动选择",
-    "🇺🇸 美国-01",
-    "🇩🇪 德国-01",
+    "Ai稳定选择",
+    "Ai测速备用",
   ]);
   assert.equal(byName("漏网之鱼").proxies[0], "DIRECT");
   assert.deepEqual(plain(byName("自动选择")), originalAuto);
   assert.equal(result["rule-providers"].Apple.path, "./providers/rule/Apple.yaml");
   assert.equal(result.rules[0], "DOMAIN-SUFFIX,doubleclick.net,REJECT");
   assert.ok(result.rules.includes("DOMAIN,scholar.google.com,学术搜索"));
+  assert.ok(result.rules.includes("DOMAIN-SUFFIX,science.org,Ai+"));
+  assert.ok(result.rules.includes("DOMAIN-SUFFIX,challenges.cloudflare.com,Ai+"));
+  assert.ok(!result.rules.includes("DOMAIN-SUFFIX,science.org,DIRECT"));
+  assert.ok(!result.rules.includes("RULE-SET,Custom-Academic,DIRECT"));
   assert.equal(result.rules.at(-1), "MATCH,漏网之鱼");
 });
 
@@ -106,8 +118,10 @@ test("fail-safe return does not depend on a console implementation", () => {
   assert.strictEqual(loadMainWithoutConsole()(config), config);
 });
 
-test("generated extension has no network or module dependencies", () => {
+test("generated extension has no runtime fetch or unapproved URLs", () => {
   const source = fs.readFileSync(scriptPath, "utf8");
   assert.doesNotMatch(source, /\b(fetch|require|importScripts|XMLHttpRequest)\s*\(/);
-  assert.doesNotMatch(source, /https:\/\//);
+  const approvedHealthUrl = "https://chatgpt.com/cdn-cgi/trace";
+  assert.ok(source.includes(approvedHealthUrl));
+  assert.doesNotMatch(source.replace(approvedHealthUrl, ""), /https:\/\//);
 });

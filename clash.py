@@ -20,7 +20,9 @@ DEFAULT_OUTPUT_DIR = BASE_DIR / "local" / "output"
 OUTPUT_PREFIX = "merged_"
 
 AI_GROUP = "Ai+"
-AI_AUTO_GROUP = "Ai自动选择"
+AI_STABLE_GROUP = "Ai稳定选择"
+AI_AUTO_GROUP = "Ai测速备用"
+LEGACY_AI_AUTO_GROUP = "Ai自动选择"
 SCHOLAR_GROUP = "学术搜索"
 FALLBACK_GROUP = "漏网之鱼"
 CUSTOM_PROVIDER_PREFIX = "Custom-"
@@ -127,6 +129,7 @@ def load_rule_sets(index_path=RULES_INDEX):
     files = set()
     exact_rules = {}
     parsed_rules = []
+    rule_targets = {}
     rule_sets = []
 
     for position, definition in enumerate(definitions, start=1):
@@ -175,6 +178,7 @@ def load_rule_sets(index_path=RULES_INDEX):
 
             exact_rules[normalized] = f"{rule_path}:{line_number}"
             parsed_rules.append((parsed[0], parsed[1], parsed[2], target))
+            rule_targets[normalized] = target
             normalized_payload.append(normalized)
 
         names.add(name)
@@ -187,6 +191,42 @@ def load_rule_sets(index_path=RULES_INDEX):
                 "payload": normalized_payload,
             }
         )
+
+    constraints = index.get("route-constraints", [])
+    if not isinstance(constraints, list):
+        raise ConfigError(f"{index_path}: route-constraints must be a list")
+    constraint_names = set()
+    for position, constraint in enumerate(constraints, start=1):
+        if not isinstance(constraint, dict):
+            raise ConfigError(f"{index_path}: route-constraint #{position} must be a mapping")
+        constraint_name = constraint.get("name")
+        constraint_target = constraint.get("target")
+        constraint_rules = constraint.get("rules")
+        if not isinstance(constraint_name, str) or not constraint_name:
+            raise ConfigError(f"{index_path}: route-constraint #{position} requires a name")
+        if constraint_name in constraint_names:
+            raise ConfigError(f"{index_path}: duplicate route-constraint: {constraint_name}")
+        if not isinstance(constraint_target, str) or not constraint_target:
+            raise ConfigError(f"{index_path}: route-constraint {constraint_name} requires a target")
+        if not isinstance(constraint_rules, list) or not constraint_rules:
+            raise ConfigError(f"{index_path}: route-constraint {constraint_name} requires rules")
+        for constrained_rule in constraint_rules:
+            if not isinstance(constrained_rule, str) or not constrained_rule:
+                raise ConfigError(
+                    f"{index_path}: route-constraint {constraint_name} has an invalid rule"
+                )
+            actual_target = rule_targets.get(constrained_rule)
+            if actual_target is None:
+                raise ConfigError(
+                    f"{index_path}: route-constraint {constraint_name} references a missing rule: "
+                    f"{constrained_rule}"
+                )
+            if actual_target != constraint_target:
+                raise ConfigError(
+                    f"{index_path}: route-constraint {constraint_name} requires "
+                    f"{constrained_rule} -> {constraint_target}, found {actual_target}"
+                )
+        constraint_names.add(constraint_name)
 
     return rule_sets
 
@@ -210,7 +250,8 @@ def configure_ai_groups(config):
     groups[:] = [
         group
         for group in groups
-        if group.get("name") not in {AI_AUTO_GROUP, SCHOLAR_GROUP}
+        if group.get("name")
+        not in {AI_STABLE_GROUP, AI_AUTO_GROUP, LEGACY_AI_AUTO_GROUP, SCHOLAR_GROUP}
     ]
     ai_index = groups.index(ai_group)
 
@@ -230,25 +271,33 @@ def configure_ai_groups(config):
     if not ai_candidates:
         raise ConfigError(f"no eligible nodes remain for {AI_AUTO_GROUP}")
 
+    ai_stable = {
+        "name": AI_STABLE_GROUP,
+        "type": "select",
+        "proxies": ai_candidates,
+    }
     ai_auto = {
         "name": AI_AUTO_GROUP,
         "type": "url-test",
         "proxies": ai_candidates,
-        "url": "http://www.gstatic.com/generate_204",
+        "url": "https://chatgpt.com/cdn-cgi/trace",
         "interval": 300,
-        "tolerance": 20,
+        "tolerance": 50,
         "lazy": True,
+        "timeout": 8000,
+        "max-failed-times": 2,
+        "expected-status": 200,
     }
     scholar = {
         "name": SCHOLAR_GROUP,
         "type": "select",
-        "proxies": [AI_AUTO_GROUP] + ai_candidates,
+        "proxies": [AI_STABLE_GROUP, AI_AUTO_GROUP],
     }
-    groups[ai_index:ai_index] = [ai_auto, scholar]
+    groups[ai_index:ai_index] = [ai_stable, ai_auto, scholar]
 
     # Explicit node lists avoid runtime compatibility problems in FlClash
     # versions that display newer dynamic fields but do not preserve them.
-    ai_group["proxies"] = [AI_AUTO_GROUP] + ai_candidates
+    ai_group["proxies"] = [AI_STABLE_GROUP, AI_AUTO_GROUP]
     for key in (
         "include-all",
         "include-all-proxies",
@@ -294,6 +343,18 @@ def _expand_custom_rules(rule_sets):
     return expanded
 
 
+def _rule_match_key(rule):
+    if not isinstance(rule, str):
+        return None
+    parts = [part.strip() for part in rule.split(",")]
+    if len(parts) < 2 or parts[0].upper() not in SUPPORTED_RULE_TYPES:
+        return None
+    key = parts[:2]
+    if parts[-1] == "no-resolve":
+        key.append("no-resolve")
+    return ",".join(key)
+
+
 def merge_custom_rules(config, rule_sets):
     providers = config.setdefault("rule-providers", {})
     if not isinstance(providers, dict):
@@ -308,6 +369,11 @@ def merge_custom_rules(config, rule_sets):
         raise ConfigError("source config must contain a rules list")
     custom_rules = _expand_custom_rules(rule_sets)
     custom_rule_set = set(custom_rules)
+    custom_match_keys = {
+        _rule_match_key(rule)
+        for rule_set in rule_sets
+        for rule in rule_set["payload"]
+    }
     source_rules = [
         rule
         for rule in source_rules
@@ -316,6 +382,7 @@ def merge_custom_rules(config, rule_sets):
             and (
                 rule.startswith("RULE-SET," + CUSTOM_PROVIDER_PREFIX)
                 or rule in custom_rule_set
+                or _rule_match_key(rule) in custom_match_keys
             )
         )
     ]
@@ -391,16 +458,19 @@ def validate_config(config, rule_sets):
     if not rules or not rules[-1].startswith("MATCH,"):
         raise ConfigError("the final source rule must remain MATCH")
 
+    ai_stable = _group_by_name(config, AI_STABLE_GROUP)
     ai_auto = _group_by_name(config, AI_AUTO_GROUP)
     ai_group = _group_by_name(config, AI_GROUP)
     scholar = _group_by_name(config, SCHOLAR_GROUP)
     fallback = _group_by_name(config, FALLBACK_GROUP)
+    if not ai_stable or not ai_stable.get("proxies"):
+        raise ConfigError(f"{AI_STABLE_GROUP} must contain explicit proxy nodes")
     if not ai_auto or not ai_auto.get("proxies"):
         raise ConfigError(f"{AI_AUTO_GROUP} must contain explicit proxy nodes")
-    if not ai_group or ai_group.get("proxies", [None])[0] != AI_AUTO_GROUP:
-        raise ConfigError(f"{AI_GROUP} must list {AI_AUTO_GROUP} first")
-    if not scholar or scholar.get("proxies", [None])[0] != AI_AUTO_GROUP:
-        raise ConfigError(f"{SCHOLAR_GROUP} must list {AI_AUTO_GROUP} first")
+    if not ai_group or ai_group.get("proxies") != [AI_STABLE_GROUP, AI_AUTO_GROUP]:
+        raise ConfigError(f"{AI_GROUP} must prefer stable selection and keep auto as backup")
+    if not scholar or scholar.get("proxies") != [AI_STABLE_GROUP, AI_AUTO_GROUP]:
+        raise ConfigError(f"{SCHOLAR_GROUP} must share the stable AI exit")
     if not fallback or fallback.get("proxies", [None])[0] != "DIRECT":
         raise ConfigError(f"{FALLBACK_GROUP} must list DIRECT first")
 

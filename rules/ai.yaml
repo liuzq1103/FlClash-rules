@@ -1,4 +1,21 @@
 payload:
+  # ChatGPT core and its shared Cloudflare verification path. Keeping these
+  # together prevents the page and its challenge from using different exits.
+  - DOMAIN-SUFFIX,chatgpt.com
+  - DOMAIN-SUFFIX,openai.com
+  - DOMAIN-SUFFIX,oaistatic.com
+  - DOMAIN-SUFFIX,oaiusercontent.com
+  - DOMAIN-SUFFIX,oaistatsig.com
+  - DOMAIN-SUFFIX,challenges.cloudflare.com
+
+  # Confirmed academic sites that currently present a Cloudflare challenge.
+  # They must share Ai+ with challenges.cloudflare.com for session affinity.
+  - DOMAIN-SUFFIX,science.org
+  - DOMAIN-SUFFIX,pnas.org
+  - DOMAIN-SUFFIX,oup.com
+  - DOMAIN-SUFFIX,tandfonline.com
+  - DOMAIN-SUFFIX,cell.com
+
   # Academic and research services that work more reliably through an AI-safe node
   - DOMAIN-SUFFIX,ncbi.nlm.nih.gov
   - DOMAIN-SUFFIX,sagepub.com

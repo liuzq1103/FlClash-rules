@@ -44,7 +44,12 @@ def sample_config():
                 "url": "https://example.test/Google.yaml",
             },
         },
-        "rules": ["RULE-SET,Google,Google", "MATCH,漏网之鱼"],
+        "rules": [
+            "DOMAIN-SUFFIX,science.org,DIRECT",
+            "RULE-SET,Custom-Academic,DIRECT",
+            "RULE-SET,Google,Google",
+            "MATCH,漏网之鱼",
+        ],
     }
 
 
@@ -101,6 +106,65 @@ class RuleLoadingTests(unittest.TestCase):
             ["DOMAIN,scholar.google.com", "DOMAIN,scholar.google.com.hk"],
         )
 
+    def test_cloudflare_challenge_sites_share_ai_route(self):
+        by_target = {
+            target: {
+                rule
+                for rule_set in self.rule_sets
+                if rule_set["target"] == target
+                for rule in rule_set["payload"]
+            }
+            for target in {rule_set["target"] for rule_set in self.rule_sets}
+        }
+        coherent = {
+            "DOMAIN-SUFFIX,challenges.cloudflare.com",
+            "DOMAIN-SUFFIX,science.org",
+            "DOMAIN-SUFFIX,pnas.org",
+            "DOMAIN-SUFFIX,oup.com",
+            "DOMAIN-SUFFIX,tandfonline.com",
+            "DOMAIN-SUFFIX,cell.com",
+        }
+        self.assertTrue(coherent.issubset(by_target["Ai+"]))
+        self.assertTrue(coherent.isdisjoint(by_target["DIRECT"]))
+
+    def test_chatgpt_core_is_owned_by_custom_ai_rules(self):
+        ai_payload = {
+            rule
+            for rule_set in self.rule_sets
+            if rule_set["target"] == "Ai+"
+            for rule in rule_set["payload"]
+        }
+        self.assertTrue(
+            {
+                "DOMAIN-SUFFIX,chatgpt.com",
+                "DOMAIN-SUFFIX,openai.com",
+                "DOMAIN-SUFFIX,oaistatic.com",
+                "DOMAIN-SUFFIX,oaiusercontent.com",
+            }.issubset(ai_payload)
+        )
+
+    def test_route_constraint_rejects_cross_exit_regression(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "site.yaml").write_text(
+                "payload:\n  - DOMAIN-SUFFIX,science.org\n", encoding="utf-8"
+            )
+            index = root / "index.yml"
+            index.write_text(
+                "rule-sets:\n"
+                "  - name: Custom-Site\n"
+                "    file: site.yaml\n"
+                "    target: DIRECT\n"
+                "route-constraints:\n"
+                "  - name: affinity\n"
+                "    target: Ai+\n"
+                "    rules:\n"
+                "      - DOMAIN-SUFFIX,science.org\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(clash.ConfigError, "requires.*Ai.*found DIRECT"):
+                clash.load_rule_sets(index)
+
 
 class MergeTests(unittest.TestCase):
     @classmethod
@@ -115,19 +179,23 @@ class MergeTests(unittest.TestCase):
         auto = clash._group_by_name(merged, "自动选择")
         self.assertEqual(auto, original_auto)
 
-        ai_auto = clash._group_by_name(merged, "Ai自动选择")
+        ai_stable = clash._group_by_name(merged, "Ai稳定选择")
+        self.assertEqual(ai_stable["proxies"], ["🇺🇸 美国-01"])
+
+        ai_auto = clash._group_by_name(merged, "Ai测速备用")
         self.assertEqual(ai_auto["proxies"], ["🇺🇸 美国-01"])
+        self.assertEqual(ai_auto["url"], "https://chatgpt.com/cdn-cgi/trace")
+        self.assertEqual(ai_auto["expected-status"], 200)
         self.assertNotIn("include-all-proxies", ai_auto)
         self.assertNotIn("exclude-filter", ai_auto)
 
         ai = clash._group_by_name(merged, "Ai+")
-        self.assertEqual(ai["proxies"][0], "Ai自动选择")
-        self.assertEqual(ai["proxies"][1:], ["🇺🇸 美国-01"])
+        self.assertEqual(ai["proxies"], ["Ai稳定选择", "Ai测速备用"])
         self.assertNotIn("include-all-proxies", ai)
         self.assertNotIn("default-selected", ai)
 
         scholar = clash._group_by_name(merged, "学术搜索")
-        self.assertEqual(scholar["proxies"], ["Ai自动选择", "🇺🇸 美国-01"])
+        self.assertEqual(scholar["proxies"], ["Ai稳定选择", "Ai测速备用"])
 
         fallback = clash._group_by_name(merged, "漏网之鱼")
         self.assertEqual(fallback["proxies"][0], "DIRECT")
@@ -143,6 +211,8 @@ class MergeTests(unittest.TestCase):
         expected = clash._expand_custom_rules(self.rule_sets)
         self.assertEqual(merged["rules"][: len(expected)], expected)
         self.assertEqual(merged["rules"][-1], "MATCH,漏网之鱼")
+        self.assertNotIn("DOMAIN-SUFFIX,science.org,DIRECT", merged["rules"])
+        self.assertNotIn("RULE-SET,Custom-Academic,DIRECT", merged["rules"])
         self.assertFalse(
             any(name.startswith("Custom-") for name in merged["rule-providers"])
         )

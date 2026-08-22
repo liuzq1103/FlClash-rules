@@ -6,6 +6,17 @@ const CUSTOM_RULES = [
   "DOMAIN-SUFFIX,googlesyndication.com,REJECT",
   "DOMAIN-SUFFIX,googleadservices.com,REJECT",
   "DOMAIN,sb.scorecardresearch.com,REJECT",
+  "DOMAIN-SUFFIX,chatgpt.com,Ai+",
+  "DOMAIN-SUFFIX,openai.com,Ai+",
+  "DOMAIN-SUFFIX,oaistatic.com,Ai+",
+  "DOMAIN-SUFFIX,oaiusercontent.com,Ai+",
+  "DOMAIN-SUFFIX,oaistatsig.com,Ai+",
+  "DOMAIN-SUFFIX,challenges.cloudflare.com,Ai+",
+  "DOMAIN-SUFFIX,science.org,Ai+",
+  "DOMAIN-SUFFIX,pnas.org,Ai+",
+  "DOMAIN-SUFFIX,oup.com,Ai+",
+  "DOMAIN-SUFFIX,tandfonline.com,Ai+",
+  "DOMAIN-SUFFIX,cell.com,Ai+",
   "DOMAIN-SUFFIX,ncbi.nlm.nih.gov,Ai+",
   "DOMAIN-SUFFIX,sagepub.com,Ai+",
   "DOMAIN,gene-structure.vercel.app,Ai+",
@@ -39,7 +50,6 @@ const CUSTOM_RULES = [
   "DOMAIN,scholar.google.com,学术搜索",
   "DOMAIN,scholar.google.com.hk,学术搜索",
   "DOMAIN-SUFFIX,wiley.com,DIRECT",
-  "DOMAIN-SUFFIX,pnas.org,DIRECT",
   "DOMAIN-SUFFIX,nature.com,DIRECT",
   "DOMAIN-SUFFIX,springer.com,DIRECT",
   "DOMAIN-SUFFIX,springernature.com,DIRECT",
@@ -47,10 +57,6 @@ const CUSTOM_RULES = [
   "DOMAIN-SUFFIX,ieee.org,DIRECT",
   "DOMAIN-SUFFIX,aps.org,DIRECT",
   "DOMAIN-SUFFIX,taylorandfrancis.com,DIRECT",
-  "DOMAIN-SUFFIX,tandfonline.com,DIRECT",
-  "DOMAIN-SUFFIX,oup.com,DIRECT",
-  "DOMAIN-SUFFIX,science.org,DIRECT",
-  "DOMAIN-SUFFIX,cell.com,DIRECT",
   "DOMAIN-SUFFIX,webofscience.com,DIRECT",
   "DOMAIN-SUFFIX,webofknowledge.com,DIRECT",
   "DOMAIN-SUFFIX,clarivate.com,DIRECT",
@@ -121,7 +127,9 @@ const CUSTOM_RULES = [
   "DOMAIN,bam.nr-data.net,DIRECT"
 ];
 const AI_GROUP = "Ai+";
-const AI_AUTO_GROUP = "Ai自动选择";
+const AI_STABLE_GROUP = "Ai稳定选择";
+const AI_AUTO_GROUP = "Ai测速备用";
+const LEGACY_AI_AUTO_GROUP = "Ai自动选择";
 const SCHOLAR_GROUP = "学术搜索";
 const FALLBACK_GROUP = "漏网之鱼";
 
@@ -172,28 +180,40 @@ function configureGroups(config) {
   if (!nodes.length) throw new Error("no eligible non-HK/MO/TW AI nodes remain");
 
   config["proxy-groups"] = groups.filter(
-    (group) => group && group.name !== AI_AUTO_GROUP && group.name !== SCHOLAR_GROUP,
+    (group) => group && ![
+      AI_STABLE_GROUP,
+      AI_AUTO_GROUP,
+      LEGACY_AI_AUTO_GROUP,
+      SCHOLAR_GROUP,
+    ].includes(group.name),
   );
   const aiIndex = config["proxy-groups"].findIndex((group) => group.name === AI_GROUP);
 
+  const aiStable = {
+    name: AI_STABLE_GROUP,
+    type: "select",
+    proxies: [...nodes],
+  };
   const aiAuto = {
     name: AI_AUTO_GROUP,
     type: "url-test",
     proxies: [...nodes],
-    url: "http://www.gstatic.com/generate_204",
+    url: "https://chatgpt.com/cdn-cgi/trace",
     interval: 300,
-    tolerance: 20,
+    tolerance: 50,
     lazy: true,
+    timeout: 8000,
+    "max-failed-times": 2,
+    "expected-status": 200,
   };
   const scholar = {
     name: SCHOLAR_GROUP,
     type: "select",
-    // Select and keep one explicit node in the client; Ai自动选择 is only fallback.
-    proxies: [AI_AUTO_GROUP, ...nodes],
+    proxies: [AI_STABLE_GROUP, AI_AUTO_GROUP],
   };
-  config["proxy-groups"].splice(aiIndex, 0, aiAuto, scholar);
+  config["proxy-groups"].splice(aiIndex, 0, aiStable, aiAuto, scholar);
 
-  ai.proxies = [AI_AUTO_GROUP, ...nodes];
+  ai.proxies = [AI_STABLE_GROUP, AI_AUTO_GROUP];
   for (const key of [
     "include-all",
     "include-all-proxies",
@@ -213,8 +233,37 @@ function configureGroups(config) {
 function configureRules(config) {
   if (!Array.isArray(config.rules)) throw new Error("subscription must contain a rules array");
   const custom = new Set(CUSTOM_RULES);
+  const customRuleKey = (rule) => {
+    if (typeof rule !== "string") return null;
+    const parts = rule.split(",").map((part) => part.trim());
+    if (parts.length < 2 || ![
+      "DOMAIN",
+      "DOMAIN-SUFFIX",
+      "DOMAIN-KEYWORD",
+      "DOMAIN-WILDCARD",
+      "DOMAIN-REGEX",
+      "IP-CIDR",
+      "IP-CIDR6",
+      "SRC-IP-CIDR",
+      "DST-PORT",
+      "SRC-PORT",
+      "PROCESS-NAME",
+      "PROCESS-PATH",
+      "NETWORK",
+      "GEOIP",
+      "GEOSITE",
+    ].includes(parts[0].toUpperCase())) return null;
+    const key = parts.slice(0, 2);
+    if (parts[parts.length - 1] === "no-resolve") key.push("no-resolve");
+    return key.join(",");
+  };
+  const customKeys = new Set(CUSTOM_RULES.map(customRuleKey));
   const original = config.rules.filter(
-    (rule) => typeof rule !== "string" || !custom.has(rule),
+    (rule) => typeof rule !== "string" || !(
+      custom.has(rule) ||
+      rule.startsWith("RULE-SET,Custom-") ||
+      customKeys.has(customRuleKey(rule))
+    ),
   );
   config.rules = [...CUSTOM_RULES, ...original];
 }
@@ -225,14 +274,27 @@ function validateResult(config) {
   if (names.some((name, index) => !name || names.indexOf(name) !== index)) {
     throw new Error("proxy group names must be present and unique");
   }
-  for (const required of [AI_AUTO_GROUP, AI_GROUP, SCHOLAR_GROUP, FALLBACK_GROUP]) {
+  for (const required of [
+    AI_STABLE_GROUP,
+    AI_AUTO_GROUP,
+    AI_GROUP,
+    SCHOLAR_GROUP,
+    FALLBACK_GROUP,
+  ]) {
     if (!names.includes(required)) throw new Error(`generated group is missing: ${required}`);
   }
-  if (!groupByName(config, AI_AUTO_GROUP).proxies.length) {
-    throw new Error("Ai自动选择 is empty");
+  if (!groupByName(config, AI_STABLE_GROUP).proxies.length ||
+      !groupByName(config, AI_AUTO_GROUP).proxies.length) {
+    throw new Error("AI stable/backup group is empty");
   }
-  if (groupByName(config, AI_GROUP).proxies[0] !== AI_AUTO_GROUP) {
-    throw new Error("Ai+ does not prefer Ai自动选择");
+  const expectedAiChoices = [AI_STABLE_GROUP, AI_AUTO_GROUP];
+  if (JSON.stringify(groupByName(config, AI_GROUP).proxies) !==
+      JSON.stringify(expectedAiChoices)) {
+    throw new Error("Ai+ does not prefer stable selection");
+  }
+  if (JSON.stringify(groupByName(config, SCHOLAR_GROUP).proxies) !==
+      JSON.stringify(expectedAiChoices)) {
+    throw new Error("academic search does not share the stable AI exit");
   }
   if (groupByName(config, FALLBACK_GROUP).proxies[0] !== "DIRECT") {
     throw new Error("漏网之鱼 does not prefer DIRECT");

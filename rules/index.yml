@@ -18,3 +18,23 @@ rule-sets:
   - name: Custom-Direct
     file: direct.yaml
     target: DIRECT
+
+# These related requests must use one policy group. Moving only the main site
+# back to DIRECT would split Cloudflare's session across different exit IPs.
+route-constraints:
+  - name: cloudflare-session-affinity
+    target: Ai+
+    rules:
+      - DOMAIN-SUFFIX,challenges.cloudflare.com
+      - DOMAIN-SUFFIX,science.org
+      - DOMAIN-SUFFIX,pnas.org
+      - DOMAIN-SUFFIX,oup.com
+      - DOMAIN-SUFFIX,tandfonline.com
+      - DOMAIN-SUFFIX,cell.com
+  - name: chatgpt-core
+    target: Ai+
+    rules:
+      - DOMAIN-SUFFIX,chatgpt.com
+      - DOMAIN-SUFFIX,openai.com
+      - DOMAIN-SUFFIX,oaistatic.com
+      - DOMAIN-SUFFIX,oaiusercontent.com

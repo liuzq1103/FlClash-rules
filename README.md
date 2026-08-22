@@ -60,14 +60,14 @@ python clash.py --check
 1. 在 Clash Verge Rev 中保留并更新原始 `gw树洞.yaml` 订阅。
 2. 给这条订阅配置“扩展脚本”，粘贴 `dist/override.js` 的完整内容。
 3. 不要把脚本放到“全局扩展脚本”；全局扩展配置也保持为空。
-4. 先使用“预览”确认存在 `Ai自动选择`、`学术搜索`，且规则仍以原订阅的 `MATCH` 结束。
-5. 启用订阅后，在 `学术搜索` 中固定一个稳定的非港澳台节点。
+4. 先使用“预览”确认存在 `Ai稳定选择`、`Ai测速备用`、`学术搜索`，且规则仍以原订阅的 `MATCH` 结束。
+5. 启用订阅后，在 `Ai稳定选择` 中固定一个可正常打开 ChatGPT 的非港澳台节点；`Ai+` 和 `学术搜索` 会共同使用它。
 
 如果扩展后出现网络异常，直接禁用这条订阅的扩展脚本即可恢复原始订阅。
 
 ## 策略组
 
-### `Ai自动选择`
+### `Ai稳定选择`
 
 每次加载订阅时读取当前 `proxies`，排除：
 
@@ -75,15 +75,19 @@ python clash.py --check
 - 流量、到期、同步、套餐、官网和客服等提示节点；
 - `DIRECT` 等非代理节点。
 
-该组使用 `url-test`。订阅原有的全局 `自动选择` 完全不修改，因此普通业务仍可继续使用香港节点。
+该组使用 `select` 并作为 `Ai+` 的默认出口。客户端会按组名记住人工选择，避免浏览过程中因延迟变化切换公网 IP。订阅原有的全局 `自动选择` 完全不修改，因此普通业务仍可继续使用香港节点。
+
+### `Ai测速备用`
+
+备用组使用 `https://chatgpt.com/cdn-cgi/trace` 检查候选节点，要求 HTTP `200`，只在人工稳定节点失效时手动切换使用。它不再用 Google 204 代替 ChatGPT 可达性检查，也不再作为 `Ai+` 默认项。[Mihomo 的 `expected-status` 说明](https://wiki.metacubex.one/en/config/proxy-groups/)
 
 ### `Ai+`
 
-首项为 `Ai自动选择`，随后列出所有合格节点供手动切换。不会引用可能间接选中香港节点的原始“手动选择”组。
+只包含 `Ai稳定选择` 和 `Ai测速备用`，前者默认优先。不会引用可能间接选中香港节点的原始“手动选择”组。
 
 ### `学术搜索`
 
-仅接管 `scholar.google.com` 和 `scholar.google.com.hk`。该组使用 `select`，建议固定一个稳定、共享程度较低的节点，避免频繁切换出口 IP 导致 Scholar 验证码。普通 Google 和 YouTube 沿用订阅策略。
+仅接管 `scholar.google.com` 和 `scholar.google.com.hk`，并与 `Ai+` 共用 `Ai稳定选择`，避免搜索过程中频繁切换出口 IP。普通 Google 和 YouTube 沿用订阅策略。
 
 ## 规则优先级
 
@@ -118,6 +122,8 @@ payload:
 payload:
   - DOMAIN-SUFFIX,special-research.example
 ```
+
+如果网站返回 Cloudflare Challenge，主站和 `challenges.cloudflare.com` 必须使用同一策略。此类学术域名应加入 `rules/ai.yaml`，并在 `rules/index.yml` 的 `cloudflare-session-affinity` 约束中登记；不要只把主站放进 `academic.yaml` 直连。校验器会在相关规则被移动到不同策略时直接报错。
 
 修改 Tailscale：
 
@@ -158,6 +164,9 @@ node --test tests/*.js
 - 广告规则置顶；普通 Google、YouTube 不再被自定义规则整体导向 `Ai+`。
 - 修复原订阅 `Apple` 与 `AppleDev` provider 缓存路径冲突。
 - `漏网之鱼` 将 `DIRECT` 放在第一项，但保留原有其他选择。
+- ChatGPT 核心域名由本项目明确接管，不再完全依赖订阅的远程 OpenAI provider。
+- 实测会触发 Cloudflare Challenge 的 Science、PNAS、Oxford Academic、Taylor & Francis 和 Cell 改走 `Ai+`，与验证资源保持同一出口。
+- 原 `Ai自动选择` 被替换为“人工稳定出口优先、ChatGPT 测速备用”，避免只因 Google 延迟变化切换 AI 公网 IP。
 
 ## 命令
 

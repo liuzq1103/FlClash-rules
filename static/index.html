@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FlClash 分流规则管理</title>
+<style>
+  :root {
+    --ok: #15803d; --ok-bg: #f0fdf4;
+    --warn: #b45309; --warn-bg: #fffbeb;
+    --err: #b91c1c; --err-bg: #fef2f2;
+    --border: #d4d4d8; --muted: #71717a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC",
+      "Microsoft YaHei", sans-serif;
+    margin: 0; padding: 24px 16px 64px; background: #fafafa; color: #18181b;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+  }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  button {
+    font: inherit; cursor: pointer; border-radius: 8px;
+    border: 1px solid var(--border); background: #fff; padding: 8px 14px;
+  }
+  button:hover:not(:disabled) { background: #f4f4f5; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: #18181b; color: #fff; border-color: #18181b; }
+  button.primary:hover:not(:disabled) { background: #3f3f46; }
+  section {
+    background: #fff; border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px; margin-bottom: 16px;
+  }
+  input[type=text], select {
+    font: inherit; width: 100%; padding: 9px 11px;
+    border: 1px solid var(--border); border-radius: 8px; background: #fff;
+  }
+  input:focus, select:focus { outline: 2px solid #a1a1aa; border-color: transparent; }
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 13px;
+  }
+  #url-input { margin-bottom: 12px; }
+  .candidate {
+    display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+    padding: 7px 10px; border: 1px solid var(--border);
+    border-radius: 8px; margin-bottom: 8px; cursor: pointer;
+  }
+  .candidate:has(input:checked) { border-color: #18181b; background: #fafafa; }
+  .candidate input { margin: 0; }
+  .candidate .rule { font-weight: 600; }
+  .candidate .note { color: var(--muted); font-size: 13px; }
+  .custom-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+  .status {
+    border-radius: 8px; padding: 9px 11px; font-size: 13.5px;
+    margin: 10px 0; display: none; word-break: break-all;
+  }
+  .status.show { display: block; }
+  .status.ok { background: var(--ok-bg); color: var(--ok); }
+  .status.warn { background: var(--warn-bg); color: var(--warn); }
+  .status.err { background: var(--err-bg); color: var(--err); }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  .row select { flex: 1; min-width: 240px; width: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #f0f0f0; }
+  tr:last-child td { border-bottom: none; }
+  th { color: var(--muted); font-weight: 500; }
+  td.num, th.num { text-align: right; width: 72px; }
+  .muted { color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>FlClash 分流规则管理</h1>
+    <button id="build-btn" class="primary" type="button">生成 dist/override.js</button>
+  </header>
+
+  <div id="page-status" class="status" role="status"></div>
+
+  <section>
+    <h2>添加规则</h2>
+    <input id="url-input" type="text" autocomplete="off" spellcheck="false"
+      placeholder="粘贴网址或裸域名，例如 https://www.nature.com/articles/...">
+    <div id="candidates"></div>
+    <div id="custom-box" class="custom-row" hidden>
+      <input id="custom-rule" type="text" autocomplete="off" spellcheck="false"
+        placeholder="自定义规则，如 DOMAIN-SUFFIX,example.com">
+    </div>
+    <div id="inspect-status" class="status" role="status"></div>
+    <div class="row">
+      <select id="file-select" aria-label="目标规则文件"></select>
+      <button id="add-btn" class="primary" type="button" disabled>确定添加</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>规则文件一览</h2>
+    <div id="files-overview"><span class="muted">加载中…</span></div>
+  </section>
+</div>
+
+<script>
+"use strict";
+
+const FILE_NOTES = {
+  "reject.yaml": "广告拦截",
+  "ai.yaml": "AI / 开发服务（代理）",
+  "scholar.yaml": "Google Scholar（稳定代理出口）",
+  "academic.yaml": "学术出版社（默认直连，可切 Ai+）",
+  "tailscale.yaml": "Tailscale（直连）",
+  "direct.yaml": "其他明确直连",
+};
+
+const $ = (id) => document.getElementById(id);
+const urlInput = $("url-input");
+const candidatesBox = $("candidates");
+const customBox = $("custom-box");
+const customInput = $("custom-rule");
+const inspectStatus = $("inspect-status");
+const fileSelect = $("file-select");
+const addBtn = $("add-btn");
+const buildBtn = $("build-btn");
+const pageStatus = $("page-status");
+const filesOverview = $("files-overview");
+
+let currentCandidates = [];
+let parseTimer = 0;
+let inspectTimer = 0;
+let inspectSeq = 0;
+let addInFlight = false;
+let inspectAllows = false;
+
+function showStatus(element, kind, text) {
+  element.className = "status show " + kind;
+  element.textContent = text;
+}
+
+function hideStatus(element) {
+  element.className = "status";
+}
+
+function updateAddButton() {
+  addBtn.disabled = !inspectAllows || addInFlight;
+}
+
+async function api(path, body) {
+  const options = body === undefined
+    ? {}
+    : {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      };
+  const response = await fetch(path, options);
+  let data = null;
+  try { data = await response.json(); } catch (_) { data = null; }
+  if (!response.ok) {
+    throw new Error((data && data.error) || `请求失败（HTTP ${response.status}）`);
+  }
+  return data;
+}
+
+function renderFiles(files) {
+  filesOverview.replaceChildren();
+  if (!files.length) {
+    const span = document.createElement("span");
+    span.className = "muted";
+    span.textContent = "规则库暂不可用";
+    filesOverview.appendChild(span);
+    return;
+  }
+  const table = document.createElement("table");
+  const head = document.createElement("tr");
+  for (const label of ["文件", "目标策略", "规则数"]) {
+    const th = document.createElement("th");
+    if (label === "规则数") th.className = "num";
+    th.textContent = label;
+    head.appendChild(th);
+  }
+  table.appendChild(head);
+  for (const item of files) {
+    const tr = document.createElement("tr");
+    const file = document.createElement("td");
+    file.className = "mono";
+    file.textContent = item.file;
+    const target = document.createElement("td");
+    target.textContent = item.target;
+    const count = document.createElement("td");
+    count.className = "num";
+    count.textContent = String(item.count);
+    tr.append(file, target, count);
+    table.appendChild(tr);
+  }
+  filesOverview.appendChild(table);
+}
+
+function renderFileSelect(files) {
+  const previous = fileSelect.value;
+  fileSelect.replaceChildren();
+  for (const item of files) {
+    const option = document.createElement("option");
+    option.value = item.file;
+    const note = FILE_NOTES[item.file];
+    option.textContent = `${item.file} — ${item.target}${note ? `（${note}）` : ""}`;
+    fileSelect.appendChild(option);
+  }
+  if (previous && files.some((item) => item.file === previous)) {
+    fileSelect.value = previous;
+  }
+}
+
+async function refreshState() {
+  let state;
+  try {
+    state = await api("/api/state");
+  } catch (error) {
+    renderFiles([]);
+    fileSelect.replaceChildren();
+    addBtn.disabled = true;
+    buildBtn.disabled = true;
+    showStatus(pageStatus, "err", error.message);
+    return;
+  }
+  buildBtn.disabled = false;
+  renderFiles(state.files);
+  renderFileSelect(state.files);
+  if (state.dist.stale) {
+    showStatus(pageStatus, "warn", state.dist.exists
+      ? "dist/override.js 与当前规则不一致，建议点击右上角按钮重新生成。"
+      : "dist/override.js 尚不存在，点击右上角按钮生成。");
+  } else {
+    hideStatus(pageStatus);
+  }
+}
+
+function resetCandidates() {
+  currentCandidates = [];
+  candidatesBox.replaceChildren();
+  customBox.hidden = true;
+  customInput.value = "";
+  inspectAllows = false;
+  hideStatus(inspectStatus);
+  updateAddButton();
+}
+
+async function parseUrl() {
+  const text = urlInput.value.trim();
+  if (!text) {
+    resetCandidates();
+    return;
+  }
+  let data;
+  try {
+    data = await api("/api/parse", { url: text });
+  } catch (error) {
+    resetCandidates();
+    showStatus(inspectStatus, "err", error.message);
+    return;
+  }
+  renderCandidates(data.candidates);
+}
+
+function renderCandidates(candidates) {
+  currentCandidates = candidates;
+  candidatesBox.replaceChildren();
+  customInput.value = "";
+  customBox.hidden = true;
+
+  candidates.forEach((item, index) => {
+    const label = document.createElement("label");
+    label.className = "candidate";
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "candidate";
+    radio.checked = index === 0;
+    radio.addEventListener("change", scheduleInspect);
+    const rule = document.createElement("span");
+    rule.className = "rule mono";
+    rule.textContent = item.rule;
+    const note = document.createElement("span");
+    note.className = "note";
+    note.textContent = item.note;
+    label.append(radio, rule, note);
+    candidatesBox.appendChild(label);
+  });
+
+  const customLabel = document.createElement("label");
+  customLabel.className = "candidate";
+  const customRadio = document.createElement("input");
+  customRadio.type = "radio";
+  customRadio.name = "candidate";
+  customRadio.id = "custom-radio";
+  customRadio.addEventListener("change", () => {
+    customBox.hidden = false;
+    customInput.focus();
+    scheduleInspect();
+  });
+  const customNote = document.createElement("span");
+  customNote.className = "note";
+  customNote.textContent = "自定义：手动输入完整规则";
+  customLabel.append(customRadio, customNote);
+  candidatesBox.appendChild(customLabel);
+
+  scheduleInspect();
+}
+
+function currentRule() {
+  const custom = document.getElementById("custom-radio");
+  if (custom && custom.checked) return customInput.value.trim();
+  const radios = Array.from(candidatesBox.querySelectorAll('input[name="candidate"]'));
+  const checked = radios.find((radio) => radio.checked);
+  if (!checked) return null;
+  const index = radios.indexOf(checked);
+  return index >= 0 && index < currentCandidates.length
+    ? currentCandidates[index].rule
+    : null;
+}
+
+function scheduleInspect() {
+  clearTimeout(inspectTimer);
+  inspectTimer = setTimeout(runInspect, 250);
+}
+
+async function runInspect() {
+  const rule = currentRule();
+  const file = fileSelect.value;
+  const seq = ++inspectSeq;
+  if (!rule || !file) {
+    inspectAllows = false;
+    hideStatus(inspectStatus);
+    updateAddButton();
+    return;
+  }
+  let result;
+  try {
+    result = await api("/api/inspect", { rule, file });
+  } catch (error) {
+    if (seq !== inspectSeq) return;
+    showStatus(inspectStatus, "err", error.message);
+    inspectAllows = false;
+    updateAddButton();
+    return;
+  }
+  if (seq !== inspectSeq) return;
+  if (result.status === "ok") {
+    showStatus(inspectStatus, "ok", "规则可用，可以添加。");
+  } else if (result.status === "warn") {
+    showStatus(inspectStatus, "warn", result.warning);
+  } else {
+    showStatus(inspectStatus, "err", result.message);
+  }
+  inspectAllows = result.status !== "blocked";
+  updateAddButton();
+}
+
+urlInput.addEventListener("input", () => {
+  clearTimeout(parseTimer);
+  parseTimer = setTimeout(parseUrl, 400);
+});
+
+customInput.addEventListener("input", () => {
+  const custom = document.getElementById("custom-radio");
+  if (custom) custom.checked = true;
+  scheduleInspect();
+});
+
+fileSelect.addEventListener("change", scheduleInspect);
+
+addBtn.addEventListener("click", async () => {
+  const rule = currentRule();
+  const file = fileSelect.value;
+  if (!rule || !file || addInFlight) return;
+  addInFlight = true;
+  updateAddButton();
+  try {
+    const result = await api("/api/add-rule", { rule, file });
+    urlInput.value = "";
+    resetCandidates();
+    const base = `已添加到 ${result.file}：${result.rule}`;
+    showStatus(inspectStatus, "ok",
+      result.warning ? `${base}（${result.warning}）` : base);
+    refreshState();
+  } catch (error) {
+    showStatus(inspectStatus, "err", error.message);
+  } finally {
+    addInFlight = false;
+    updateAddButton();
+  }
+});
+
+buildBtn.addEventListener("click", async () => {
+  buildBtn.disabled = true;
+  try {
+    const result = await api("/api/build", {});
+    await refreshState();
+    showStatus(pageStatus, "ok",
+      `已生成 ${result.path}（${result.count} 条规则），粘贴到客户端扩展脚本即可。`);
+  } catch (error) {
+    showStatus(pageStatus, "err", error.message);
+    buildBtn.disabled = false;
+  }
+});
+
+refreshState();
+urlInput.focus();
+</script>
+</body>
+</html>

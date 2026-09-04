@@ -24,6 +24,7 @@
 ```text
 FlClash/
 ├── clash.py
+├── webui.py
 ├── requirements.txt
 ├── rules/
 │   ├── index.yml       # 优先级、文件和目标策略
@@ -35,6 +36,8 @@ FlClash/
 │   └── direct.yaml     # 其他明确直连
 ├── templates/
 │   └── override.js.tpl
+├── static/
+│   └── index.html      # 图形界面
 ├── dist/
 │   └── override.js     # 生成后粘贴到客户端
 ├── tests/
@@ -199,7 +202,27 @@ node --test tests/*.js
 python clash.py                         生成 dist/override.js
 python clash.py --check                 检查规则和生成物是否一致
 python clash.py --check-rules           只检查 rules/，不读取订阅
+python webui.py                         启动本地图形界面（默认 http://127.0.0.1:8765）
 ```
+
+## 图形界面
+
+`webui.py` 提供本地网页界面，用于快速添加规则并生成脚本：
+
+```powershell
+python webui.py                # 默认 http://127.0.0.1:8765，自动打开浏览器
+python webui.py --port 9000    # 指定端口
+python webui.py --no-browser   # 不自动打开浏览器
+```
+
+功能：
+
+- 粘贴网址后自动提取注册域，生成 `DOMAIN-SUFFIX` / `DOMAIN` / `DOMAIN-KEYWORD` 候选并要求确认；
+- 添加前检测完全重复、被更高优先级规则覆盖等冲突，存在硬冲突时阻止写入；
+- 选择目标规则文件后一键追加（保留注释），失败自动回滚；
+- 点击"生成 dist/override.js"完成最终脚本输出。
+
+服务只监听 `127.0.0.1`，不联网、不读写规则以外的文件。日常修改也可以继续直接编辑 `rules/*.yaml`。
 
 ## GitHub 同步与隐私
 

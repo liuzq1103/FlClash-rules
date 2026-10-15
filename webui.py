@@ -9,8 +9,10 @@ Run: python webui.py --port 8765 --no-browser
 import argparse
 import ipaddress
 import json
+import os
 import re
 import sys
+import tempfile
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -217,7 +219,10 @@ def append_rule(rule_text, target_file, index_path=clash.RULES_INDEX):
         raise clash.ConfigError(f"未知的规则文件: {target_file}")
 
     rule_path = index_path.parent / target_file
-    original = rule_path.read_bytes().decode("utf-8")
+    original_bytes = rule_path.read_bytes()
+    # Normalize CRLF so write_text_atomic's strict LF round-trip check passes
+    # on Windows checkouts where Git may materialize rules/*.yaml as CRLF.
+    original = original_bytes.decode("utf-8").replace("\r\n", "\n")
     lines = original.split("\n")
     while lines and not lines[-1].strip():
         lines.pop()
@@ -237,9 +242,24 @@ def append_rule(rule_text, target_file, index_path=clash.RULES_INDEX):
             if normalized not in appended["payload"]:
                 raise clash.ConfigError("规则未落入 payload 列表")
         except Exception as error:
-            clash.write_text_atomic(rule_path, original)
+            _restore_bytes(rule_path, original_bytes)
             raise clash.ConfigError(f"追加后规则校验失败，已回滚原文件：{error}")
     return normalized
+
+
+def _restore_bytes(path, data):
+    """Atomically restore a file to its exact original bytes (rollback path)."""
+    handle, temp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp"
+    )
+    temp_path = Path(temp_name)
+    try:
+        with os.fdopen(handle, "wb") as tmp:
+            tmp.write(data)
+        os.replace(str(temp_path), str(path))
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
 
 
 def collect_state():

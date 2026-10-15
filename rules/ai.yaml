@@ -30,31 +30,32 @@ payload:
   - DOMAIN,accounts.google.com
   - DOMAIN,apis.google.com
   - DOMAIN,ogs.google.com
-  - DOMAIN-SUFFIX,generativelanguage.googleapis.com
   - DOMAIN-SUFFIX,deepmind.com
   - DOMAIN-SUFFIX,googleapis.com
   - DOMAIN-SUFFIX,gstatic.com
   - DOMAIN-SUFFIX,googleusercontent.com
 
-  # Claude's current product domain; claude.ai/anthropic.com use subscription providers
+  # Claude / Anthropic. claude.ai is the Anthropic primary domain and the web
+  # app entry point; skipping it gets users redirected to
+  # claude.com/app-unavailable-in-region. anthropic.com carries
+  # api.anthropic.com, and claudeusercontent.com serves Claude file downloads.
+  - DOMAIN-SUFFIX,claude.ai
   - DOMAIN-SUFFIX,claude.com
+  - DOMAIN-SUFFIX,anthropic.com
+  - DOMAIN-SUFFIX,claudeusercontent.com
 
   # Grok / X
   - DOMAIN-SUFFIX,grok.com
   - DOMAIN-SUFFIX,x.ai
   - DOMAIN-SUFFIX,x.com
 
-  # GitHub and GitHub Copilot
+  # GitHub (Copilot works everywhere; see direct.yaml)
   - DOMAIN-SUFFIX,github.com
   - DOMAIN-SUFFIX,githubassets.com
   - DOMAIN-SUFFIX,githubusercontent.com
-  - DOMAIN-SUFFIX,githubcopilot.com
-  - DOMAIN,default.exp-tas.com
 
   # AI development, models and container delivery
-  - DOMAIN-SUFFIX,roboflow.com
   - DOMAIN-SUFFIX,huggingface.co
   - DOMAIN-SUFFIX,hf.co
   - DOMAIN-SUFFIX,docker.io
   - DOMAIN-SUFFIX,docker.com
-  - DOMAIN-SUFFIX,intercom.io

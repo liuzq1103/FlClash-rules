@@ -4,6 +4,9 @@ payload:
   - DOMAIN-SUFFIX,microsoft.com
   - DOMAIN-SUFFIX,xboxlive.com
 
+  # SEA-AD research data must never consume a paid proxy node.
+  - DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com
+
   # Adobe package endpoint
   - DOMAIN,cc-ext-prod-pkgs.s3.amazonaws.com
 

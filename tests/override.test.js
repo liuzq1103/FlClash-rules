@@ -95,6 +95,11 @@ test("extension creates safe dynamic groups and preserves global auto group", ()
   assert.ok(!result.rules.includes("DOMAIN-SUFFIX,google.com,Ai+"));
   assert.ok(result.rules.includes("DOMAIN-SUFFIX,science.org,学术访问"));
   assert.ok(result.rules.includes("DOMAIN-SUFFIX,challenges.cloudflare.com,Ai+"));
+  assert.ok(
+    result.rules.includes(
+      "DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com,DIRECT",
+    ),
+  );
   assert.ok(!result.rules.includes("DOMAIN-SUFFIX,science.org,DIRECT"));
   assert.ok(!result.rules.includes("DOMAIN-SUFFIX,science.org,Ai+"));
   assert.ok(!result.rules.includes("RULE-SET,Custom-Academic,DIRECT"));

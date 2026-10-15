@@ -1,8 +1,13 @@
 # FlClash 自定义分流规则
 
-本项目把代理订阅当作动态节点源，把自定义规则编译成 Clash Verge Rev / FlClash 可共用的 **JavaScript 扩展脚本**。客户端每次更新订阅后都会基于最新节点重新生成策略组，不复制、不保存完整订阅配置。
+本项目把代理订阅当作动态节点源，把自定义规则同时编译成 Clash Verge Rev / FlClash 可用的 **JavaScript 扩展脚本**，以及服务器用户级 Mihomo 可用的**无秘密策略片段**。客户端或服务器 provider 更新后都会基于最新节点工作，仓库不复制、不保存完整订阅配置。
 
 > 主客户端推荐 Clash Verge Rev。FlClash 使用“脚本”覆写模式；不要使用“自定义 → 一键填入”保存整套节点和策略组，后者是静态副本，节点名称变化后容易失效。
+
+> 项目边界：本仓库 `D:\Desktop\技术\FlClash` 只负责规则源与 PC/服务器策略
+> 生成物。服务器端用户服务和 Shell 控制器位于独立仓库
+> `D:\Desktop\技术\mihomo-userctl`。前者决定 Mihomo 内部如何分流，后者决定
+> 某个服务器 Shell/命令是否进入 Mihomo；不要把两个项目的源码或 Git 历史混在一起。
 
 ## 工作方式
 
@@ -11,12 +16,17 @@
   → 订阅级 dist/override.js
   → 动态 AI/学术策略组 + 个性化规则
   → Mihomo 运行配置
+
+服务器 subscription provider
+  → dist/server-policy.yaml
+  → Ai+/学术策略组 + 129 条个性化规则 + MATCH,DIRECT
+  → liuzq 用户级 Mihomo
 ```
 
 - 原始订阅继续负责节点、DNS、通用 provider 和基础分流。
 - `rules/*.yaml` 是自定义规则的唯一来源。
-- `clash.py` 将分类规则展开为普通 Mihomo 规则并生成 `dist/override.js`。
-- 脚本不联网、不读取 GitHub、不包含订阅地址或节点凭据。
+- `clash.py` 将分类规则展开为普通 Mihomo 规则，并生成 `dist/override.js` 与 `dist/server-policy.yaml`。
+- 两个生成物都不联网、不读取 GitHub、不包含订阅地址、Listener 凭据或节点内容。
 - 脚本在副本上修改并完成自检；任何异常都返回原始配置。
 
 ## 目录
@@ -39,7 +49,10 @@ FlClash/
 ├── static/
 │   └── index.html      # 图形界面
 ├── dist/
-│   └── override.js     # 生成后粘贴到客户端
+│   ├── override.js          # 生成后粘贴到客户端
+│   └── server-policy.yaml   # 服务器 Mihomo 无秘密策略片段
+├── docs/
+│   └── 服务器Mihomo维护说明.md
 ├── tests/
 ├── .github/workflows/validate.yml
 ```
@@ -199,8 +212,8 @@ node --test tests/*.js
 ## 命令
 
 ```text
-python clash.py                         生成 dist/override.js
-python clash.py --check                 检查规则和生成物是否一致
+python clash.py                         生成 override.js 和 server-policy.yaml
+python clash.py --check                 检查规则及两个生成物是否一致
 python clash.py --check-rules           只检查 rules/，不读取订阅
 python webui.py                         启动本地图形界面（默认 http://127.0.0.1:8765）
 ```
@@ -223,6 +236,20 @@ python webui.py --no-browser   # 不自动打开浏览器
 - 点击"生成 dist/override.js"完成最终脚本输出。
 
 服务只监听 `127.0.0.1`，不联网、不读写规则以外的文件。日常修改也可以继续直接编辑 `rules/*.yaml`。
+
+## 服务器用户级 Mihomo
+
+`dist/server-policy.yaml` 只提供策略组和规则。完整服务器配置中的 subscription URL、认证 Listener、provider 缓存和节点内容只能保存在服务器权限收紧的目录，不得进入本仓库。
+
+服务器策略固定为：
+
+- `Ai+`：动态使用 `subscription` provider；
+- `学术搜索`：默认 `Ai+`，保留 `DIRECT`；
+- `学术访问`：默认 `DIRECT`，保留 `Ai+`；
+- SEA-AD S3：精确 `DIRECT`；
+- 未命中规则：`MATCH,DIRECT`。
+
+部署、认证边界、手动 systemd 服务、测试与回滚见 [服务器 Mihomo 维护说明](docs/服务器Mihomo维护说明.md)。
 
 ## GitHub 同步与隐私
 

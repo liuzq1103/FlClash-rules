@@ -84,6 +84,7 @@ class RuleLoadingTests(unittest.TestCase):
             "DOMAIN-SUFFIX,hf.co",
             "DOMAIN-SUFFIX,claude.com",
             "DOMAIN-SUFFIX,x.ai",
+            "DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com",
         }
         self.assertTrue(expected.issubset(payload))
 
@@ -281,6 +282,27 @@ class ScriptGenerationTests(unittest.TestCase):
             target = Path(directory) / "override.js"
             clash.write_text_atomic(target, "const group = '学术搜索';\n")
             self.assertEqual(target.read_text(encoding="utf-8"), "const group = '学术搜索';\n")
+
+    def test_server_policy_is_secret_free_and_direct_by_default(self):
+        policy = clash.build_server_policy(self.rule_sets)
+        groups = {group["name"]: group for group in policy["proxy-groups"]}
+
+        self.assertEqual(groups["Ai+"]["type"], "url-test")
+        self.assertEqual(groups["Ai+"]["use"], ["subscription"])
+        self.assertEqual(groups["学术搜索"]["proxies"], ["Ai+", "DIRECT"])
+        self.assertEqual(groups["学术访问"]["proxies"], ["DIRECT", "Ai+"])
+        self.assertEqual(policy["rules"][-1], "MATCH,DIRECT")
+        self.assertIn(
+            "DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com,DIRECT",
+            policy["rules"],
+        )
+
+        rendered = clash.render_server_policy(self.rule_sets)
+        self.assertNotIn("proxy-providers:", rendered)
+        self.assertNotRegex(
+            rendered,
+            r"(?i)(subscription[_-]?url|password|secret|token):",
+        )
 
 
 if __name__ == "__main__":

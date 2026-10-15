@@ -1,0 +1,154 @@
+proxy-groups:
+- name: Ai+
+  type: url-test
+  use:
+  - subscription
+  exclude-filter: (?i)(?:🇭🇰|🇲🇴|🇹🇼|香港|澳门|澳門|台湾|台灣|hong[ -]?kong|macau|macao|taiwan|(?:^|[^a-z])(?:hk|mo|tw)(?:[^a-z]|$)|剩余流量|流量剩余|到期时间|过期时间|重置时间|套餐提示|订阅信息|(?:^|[\s|_-])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_-]|$))
+  url: https://chatgpt.com/cdn-cgi/trace
+  interval: 300
+  tolerance: 50
+  lazy: true
+  timeout: 8000
+  max-failed-times: 2
+  expected-status: 200
+- name: 学术搜索
+  type: select
+  proxies:
+  - Ai+
+  - DIRECT
+- name: 学术访问
+  type: select
+  proxies:
+  - DIRECT
+  - Ai+
+rules:
+- DOMAIN-SUFFIX,doubleclick.net,REJECT
+- DOMAIN-SUFFIX,googlesyndication.com,REJECT
+- DOMAIN-SUFFIX,googleadservices.com,REJECT
+- DOMAIN,sb.scorecardresearch.com,REJECT
+- DOMAIN-SUFFIX,chatgpt.com,Ai+
+- DOMAIN-SUFFIX,openai.com,Ai+
+- DOMAIN-SUFFIX,oaistatic.com,Ai+
+- DOMAIN-SUFFIX,oaiusercontent.com,Ai+
+- DOMAIN-SUFFIX,oaistatsig.com,Ai+
+- DOMAIN-SUFFIX,challenges.cloudflare.com,Ai+
+- DOMAIN-SUFFIX,ncbi.nlm.nih.gov,Ai+
+- DOMAIN-SUFFIX,sagepub.com,Ai+
+- DOMAIN,gene-structure.vercel.app,Ai+
+- DOMAIN-SUFFIX,synapse.org,Ai+
+- DOMAIN,repo-prod.prod.sagebase.org,Ai+
+- DOMAIN-SUFFIX,alphafoldserver.com,Ai+
+- DOMAIN-SUFFIX,gemini.google.com,Ai+
+- DOMAIN-SUFFIX,aistudio.google.com,Ai+
+- DOMAIN-SUFFIX,bard.google.com,Ai+
+- DOMAIN-SUFFIX,makersuite.google.com,Ai+
+- DOMAIN,google.com,Ai+
+- DOMAIN,www.google.com,Ai+
+- DOMAIN,accounts.google.com,Ai+
+- DOMAIN,apis.google.com,Ai+
+- DOMAIN,ogs.google.com,Ai+
+- DOMAIN-SUFFIX,generativelanguage.googleapis.com,Ai+
+- DOMAIN-SUFFIX,deepmind.com,Ai+
+- DOMAIN-SUFFIX,googleapis.com,Ai+
+- DOMAIN-SUFFIX,gstatic.com,Ai+
+- DOMAIN-SUFFIX,googleusercontent.com,Ai+
+- DOMAIN-SUFFIX,claude.com,Ai+
+- DOMAIN-SUFFIX,grok.com,Ai+
+- DOMAIN-SUFFIX,x.ai,Ai+
+- DOMAIN-SUFFIX,x.com,Ai+
+- DOMAIN-SUFFIX,github.com,Ai+
+- DOMAIN-SUFFIX,githubassets.com,Ai+
+- DOMAIN-SUFFIX,githubusercontent.com,Ai+
+- DOMAIN-SUFFIX,githubcopilot.com,Ai+
+- DOMAIN,default.exp-tas.com,Ai+
+- DOMAIN-SUFFIX,roboflow.com,Ai+
+- DOMAIN-SUFFIX,huggingface.co,Ai+
+- DOMAIN-SUFFIX,hf.co,Ai+
+- DOMAIN-SUFFIX,docker.io,Ai+
+- DOMAIN-SUFFIX,docker.com,Ai+
+- DOMAIN-SUFFIX,intercom.io,Ai+
+- DOMAIN,scholar.google.com,学术搜索
+- DOMAIN,scholar.google.com.hk,学术搜索
+- DOMAIN-SUFFIX,science.org,学术访问
+- DOMAIN-SUFFIX,pnas.org,学术访问
+- DOMAIN-SUFFIX,oup.com,学术访问
+- DOMAIN-SUFFIX,tandfonline.com,学术访问
+- DOMAIN-SUFFIX,cell.com,学术访问
+- DOMAIN-SUFFIX,wiley.com,学术访问
+- DOMAIN-SUFFIX,nature.com,学术访问
+- DOMAIN-SUFFIX,springer.com,学术访问
+- DOMAIN-SUFFIX,springernature.com,学术访问
+- DOMAIN-SUFFIX,acs.org,学术访问
+- DOMAIN-SUFFIX,ieee.org,学术访问
+- DOMAIN-SUFFIX,aps.org,学术访问
+- DOMAIN-SUFFIX,taylorandfrancis.com,学术访问
+- DOMAIN-SUFFIX,webofscience.com,学术访问
+- DOMAIN-SUFFIX,webofknowledge.com,学术访问
+- DOMAIN-SUFFIX,clarivate.com,学术访问
+- DOMAIN-SUFFIX,scopus.com,学术访问
+- DOMAIN-SUFFIX,sciencedirect.com,学术访问
+- DOMAIN-SUFFIX,sciencedirectassets.com,学术访问
+- DOMAIN-SUFFIX,els-cdn.com,学术访问
+- DOMAIN-SUFFIX,elsevier.com,学术访问
+- DOMAIN-SUFFIX,cellchat.org,学术访问
+- DOMAIN-SUFFIX,cancerserumatlas.com,学术访问
+- DOMAIN-SUFFIX,tailscale.com,DIRECT
+- DOMAIN-SUFFIX,tailscale.io,DIRECT
+- DOMAIN-SUFFIX,ts.net,DIRECT
+- IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
+- IP-CIDR6,fd7a:115c:a1e0::/48,DIRECT,no-resolve
+- DOMAIN-SUFFIX,bing.com,DIRECT
+- DOMAIN-SUFFIX,microsoft.com,DIRECT
+- DOMAIN-SUFFIX,xboxlive.com,DIRECT
+- DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com,DIRECT
+- DOMAIN,cc-ext-prod-pkgs.s3.amazonaws.com,DIRECT
+- DOMAIN-SUFFIX,10xfotolia.com,DIRECT
+- DOMAIN-SUFFIX,2o7.net,DIRECT
+- DOMAIN-SUFFIX,acrobat.com,DIRECT
+- DOMAIN-SUFFIX,adbecrsl.com,DIRECT
+- DOMAIN-SUFFIX,adobe-aemassets-value.com,DIRECT
+- DOMAIN-SUFFIX,adobe-audience-finder.com,DIRECT
+- DOMAIN-SUFFIX,adobe-video-partner-finder.com,DIRECT
+- DOMAIN-SUFFIX,adobe.com,DIRECT
+- DOMAIN-SUFFIX,adobe.io,DIRECT
+- DOMAIN-SUFFIX,adobe.ly,DIRECT
+- DOMAIN-SUFFIX,adobeaemcloud.com,DIRECT
+- DOMAIN-SUFFIX,adobeaemcloud.net,DIRECT
+- DOMAIN-SUFFIX,adobeawards.com,DIRECT
+- DOMAIN-SUFFIX,adobecc.com,DIRECT
+- DOMAIN-SUFFIX,adobecce.com,DIRECT
+- DOMAIN-SUFFIX,adobeccstatic.com,DIRECT
+- DOMAIN-SUFFIX,adobecontent.io,DIRECT
+- DOMAIN-SUFFIX,adobecreativityawards.com,DIRECT
+- DOMAIN-SUFFIX,adobedc.cn,DIRECT
+- DOMAIN-SUFFIX,adobedc.net,DIRECT
+- DOMAIN-SUFFIX,adobedemo.com,DIRECT
+- DOMAIN-SUFFIX,adobedtm.com,DIRECT
+- DOMAIN-SUFFIX,adobeexchange.com,DIRECT
+- DOMAIN-SUFFIX,adobeexperienceawards.com,DIRECT
+- DOMAIN-SUFFIX,adobegov.com,DIRECT
+- DOMAIN-SUFFIX,adobehiddentreasures.com,DIRECT
+- DOMAIN-SUFFIX,adobejanus.com,DIRECT
+- DOMAIN-SUFFIX,adobeku.com,DIRECT
+- DOMAIN-SUFFIX,adobelanding.com,DIRECT
+- DOMAIN-SUFFIX,adobelogin.com,DIRECT
+- DOMAIN-SUFFIX,adobeoobe.com,DIRECT
+- DOMAIN-SUFFIX,adobeplatinumclub.com,DIRECT
+- DOMAIN-SUFFIX,adobeprojectm.com,DIRECT
+- DOMAIN-SUFFIX,adobesc.com,DIRECT
+- DOMAIN-SUFFIX,adobesign.com,DIRECT
+- DOMAIN-SUFFIX,adobesigncdn.com,DIRECT
+- DOMAIN-SUFFIX,adobespark.com,DIRECT
+- DOMAIN-SUFFIX,adobess.com,DIRECT
+- DOMAIN-SUFFIX,adobestock.com,DIRECT
+- DOMAIN-SUFFIX,adobetag.com,DIRECT
+- DOMAIN-SUFFIX,adobetarget.com,DIRECT
+- DOMAIN-SUFFIX,adobetcstrialdvd.com,DIRECT
+- DOMAIN-SUFFIX,adobetechcomm.com,DIRECT
+- DOMAIN-SUFFIX,adobetechcommcallback.com,DIRECT
+- DOMAIN-SUFFIX,adobetechcommdemo.com,DIRECT
+- DOMAIN-SUFFIX,adobexdplatform.com,DIRECT
+- DOMAIN-SUFFIX,assetsadobe.com,DIRECT
+- DOMAIN-SUFFIX,authorxml.com,DIRECT
+- DOMAIN,bam.nr-data.net,DIRECT
+- MATCH,DIRECT

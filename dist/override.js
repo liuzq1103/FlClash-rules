@@ -80,6 +80,7 @@ const CUSTOM_RULES = [
   "DOMAIN-SUFFIX,bing.com,DIRECT",
   "DOMAIN-SUFFIX,microsoft.com,DIRECT",
   "DOMAIN-SUFFIX,xboxlive.com,DIRECT",
+  "DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com,DIRECT",
   "DOMAIN,cc-ext-prod-pkgs.s3.amazonaws.com,DIRECT",
   "DOMAIN-SUFFIX,10xfotolia.com,DIRECT",
   "DOMAIN-SUFFIX,2o7.net,DIRECT",

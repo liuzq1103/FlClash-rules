@@ -15,6 +15,7 @@ RULES_DIR = BASE_DIR / "rules"
 RULES_INDEX = RULES_DIR / "index.yml"
 TEMPLATE_PATH = BASE_DIR / "templates" / "override.js.tpl"
 DEFAULT_SCRIPT_OUTPUT = BASE_DIR / "dist" / "override.js"
+DEFAULT_SERVER_POLICY_OUTPUT = BASE_DIR / "dist" / "server-policy.yaml"
 
 AI_GROUP = "Ai+"
 AI_STABLE_GROUP = "Ai稳定选择"
@@ -24,6 +25,7 @@ SCHOLAR_GROUP = "学术搜索"
 ACADEMIC_GROUP = "学术访问"
 FALLBACK_GROUP = "漏网之鱼"
 CUSTOM_PROVIDER_PREFIX = "Custom-"
+SERVER_PROVIDER = "subscription"
 
 BUILTIN_TARGETS = {
     "DIRECT",
@@ -532,6 +534,47 @@ def render_override_script(rule_sets, template_path=TEMPLATE_PATH):
     return script.rstrip() + "\n"
 
 
+def build_server_policy(rule_sets):
+    """Build the non-secret policy fragment used by liuzq's server Mihomo."""
+    return {
+        "proxy-groups": [
+            {
+                "name": AI_GROUP,
+                "type": "url-test",
+                "use": [SERVER_PROVIDER],
+                "exclude-filter": AI_EXCLUDE_FILTER,
+                "url": "https://chatgpt.com/cdn-cgi/trace",
+                "interval": 300,
+                "tolerance": 50,
+                "lazy": True,
+                "timeout": 8000,
+                "max-failed-times": 2,
+                "expected-status": 200,
+            },
+            {
+                "name": SCHOLAR_GROUP,
+                "type": "select",
+                "proxies": [AI_GROUP, "DIRECT"],
+            },
+            {
+                "name": ACADEMIC_GROUP,
+                "type": "select",
+                "proxies": ["DIRECT", AI_GROUP],
+            },
+        ],
+        "rules": _expand_custom_rules(rule_sets) + ["MATCH,DIRECT"],
+    }
+
+
+def render_server_policy(rule_sets):
+    return yaml.safe_dump(
+        build_server_policy(rule_sets),
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
+    )
+
+
 def build_argument_parser():
     parser = argparse.ArgumentParser(
         description="Build a Clash Verge Rev subscription extension from maintainable rules."
@@ -559,16 +602,25 @@ def main(argv=None):
             return 0
 
         script = render_override_script(rule_sets)
+        server_policy = render_server_policy(rule_sets)
         if args.check:
             if not DEFAULT_SCRIPT_OUTPUT.is_file():
                 raise ConfigError(f"generated extension is missing: {DEFAULT_SCRIPT_OUTPUT}")
             if DEFAULT_SCRIPT_OUTPUT.read_text(encoding="utf-8") != script:
                 raise ConfigError("dist/override.js is stale; run: python clash.py")
-            print(f"Extension validation passed: {rule_count} rules")
+            if not DEFAULT_SERVER_POLICY_OUTPUT.is_file():
+                raise ConfigError(
+                    f"generated server policy is missing: {DEFAULT_SERVER_POLICY_OUTPUT}"
+                )
+            if DEFAULT_SERVER_POLICY_OUTPUT.read_text(encoding="utf-8") != server_policy:
+                raise ConfigError("dist/server-policy.yaml is stale; run: python clash.py")
+            print(f"Extension and server policy validation passed: {rule_count} rules")
             return 0
 
         write_text_atomic(DEFAULT_SCRIPT_OUTPUT, script)
+        write_text_atomic(DEFAULT_SERVER_POLICY_OUTPUT, server_policy)
         print(f"Subscription extension saved to: {DEFAULT_SCRIPT_OUTPUT}")
+        print(f"Server policy saved to: {DEFAULT_SERVER_POLICY_OUTPUT}")
         return 0
     except (ConfigError, OSError, yaml.YAMLError) as error:
         print(f"Error: {error}", file=sys.stderr)

@@ -3,7 +3,8 @@ proxy-groups:
   type: url-test
   use:
   - subscription
-  exclude-filter: (?i)(?:🇭🇰|🇲🇴|🇹🇼|香港|澳门|澳門|台湾|台灣|hong[ -]?kong|macau|macao|taiwan|(?:^|[^a-z])(?:hk|mo|tw)(?:[^a-z]|$)|剩余流量|流量剩余|到期时间|过期时间|重置时间|套餐提示|订阅信息|(?:^|[\s|_-])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_-]|$))
+  filter: (?i)(?:🇺🇸|美国|美國|united[ -]?states|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))
+  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|到期时间|过期时间|重置时间|套餐提示|订阅信息|(?:^|[\s|_-])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_-]|$))
   url: https://chatgpt.com/cdn-cgi/trace
   interval: 300
   tolerance: 50
@@ -47,26 +48,24 @@ rules:
 - DOMAIN,accounts.google.com,Ai+
 - DOMAIN,apis.google.com,Ai+
 - DOMAIN,ogs.google.com,Ai+
-- DOMAIN-SUFFIX,generativelanguage.googleapis.com,Ai+
 - DOMAIN-SUFFIX,deepmind.com,Ai+
 - DOMAIN-SUFFIX,googleapis.com,Ai+
 - DOMAIN-SUFFIX,gstatic.com,Ai+
 - DOMAIN-SUFFIX,googleusercontent.com,Ai+
+- DOMAIN-SUFFIX,claude.ai,Ai+
 - DOMAIN-SUFFIX,claude.com,Ai+
+- DOMAIN-SUFFIX,anthropic.com,Ai+
+- DOMAIN-SUFFIX,claudeusercontent.com,Ai+
 - DOMAIN-SUFFIX,grok.com,Ai+
 - DOMAIN-SUFFIX,x.ai,Ai+
 - DOMAIN-SUFFIX,x.com,Ai+
 - DOMAIN-SUFFIX,github.com,Ai+
 - DOMAIN-SUFFIX,githubassets.com,Ai+
 - DOMAIN-SUFFIX,githubusercontent.com,Ai+
-- DOMAIN-SUFFIX,githubcopilot.com,Ai+
-- DOMAIN,default.exp-tas.com,Ai+
-- DOMAIN-SUFFIX,roboflow.com,Ai+
 - DOMAIN-SUFFIX,huggingface.co,Ai+
 - DOMAIN-SUFFIX,hf.co,Ai+
 - DOMAIN-SUFFIX,docker.io,Ai+
 - DOMAIN-SUFFIX,docker.com,Ai+
-- DOMAIN-SUFFIX,intercom.io,Ai+
 - DOMAIN,scholar.google.com,学术搜索
 - DOMAIN,scholar.google.com.hk,学术搜索
 - DOMAIN-SUFFIX,science.org,学术访问
@@ -100,6 +99,7 @@ rules:
 - DOMAIN-SUFFIX,bing.com,DIRECT
 - DOMAIN-SUFFIX,microsoft.com,DIRECT
 - DOMAIN-SUFFIX,xboxlive.com,DIRECT
+- DOMAIN-SUFFIX,githubcopilot.com,DIRECT
 - DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com,DIRECT
 - DOMAIN,cc-ext-prod-pkgs.s3.amazonaws.com,DIRECT
 - DOMAIN-SUFFIX,10xfotolia.com,DIRECT

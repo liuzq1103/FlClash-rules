@@ -27,6 +27,45 @@ FALLBACK_GROUP = "漏网之鱼"
 CUSTOM_PROVIDER_PREFIX = "Custom-"
 SERVER_PROVIDER = "subscription"
 
+# Health probe for the url-test AI groups. The primary endpoint verifies the
+# node can really reach OpenAI (and filters nodes that are online but
+# IP-banned by OpenAI); the backup only proves generic connectivity. Switch
+# to the backup when the primary endpoint dies, and confirm the endpoint is
+# reachable before changing any probe URL.
+AI_PROBE_URL = "https://chatgpt.com/cdn-cgi/trace"
+AI_PROBE_URL_BACKUP = "https://www.gstatic.com/generate_204"
+
+# Built-in non-proxy node types that must never join an AI group.
+NON_PROXY_TYPES = {
+    "direct",
+    "reject",
+    "reject-drop",
+    "pass",
+    "pass-name",
+    "compatible",
+    "dns-out",
+    "dns-in",
+}
+
+# Positive US-node whitelist: only US nodes enter the AI pool because OpenAI
+# and Anthropic geo-block most other regions. To widen the region set later
+# (for example US + Japan), extend this pattern — do not revert to an
+# exclusion-style filter. The bounded us/usa tokens keep names like "Russia"
+# or "Australia" from matching accidentally.
+AI_INCLUDE_FILTER = (
+    r"(?i)(?:🇺🇸|美国|美國|united[ -]?states|"
+    r"(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))"
+)
+
+# Informational-node filter: strips airport info lines only (Expire/Traffic/
+# Sync/官网/套餐/剩余流量...). Region filtering is AI_INCLUDE_FILTER's job; a
+# US-named node stays even if its name also contains region words such as 香港.
+AI_EXCLUDE_FILTER = (
+    r"(?i)(?:🇺🇳|剩余流量|流量剩余|到期时间|过期时间|重置时间|套餐提示|订阅信息|"
+    r"(?:^|[\s|_-])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)"
+    r"(?:[\s:：|_-]|$))"
+)
+
 BUILTIN_TARGETS = {
     "DIRECT",
     "REJECT",
@@ -52,17 +91,6 @@ SUPPORTED_RULE_TYPES = {
     "GEOIP",
     "GEOSITE",
 }
-
-# Keep short country codes bounded so
-# ordinary node names containing "tw", "hk", or "mo" are not false matches.
-AI_EXCLUDE_FILTER = (
-    r"(?i)(?:🇭🇰|🇲🇴|🇹🇼|香港|澳门|澳門|台湾|台灣|"
-    r"hong[ -]?kong|macau|macao|taiwan|"
-    r"(?:^|[^a-z])(?:hk|mo|tw)(?:[^a-z]|$)|"
-    r"剩余流量|流量剩余|到期时间|过期时间|重置时间|套餐提示|订阅信息|"
-    r"(?:^|[\s|_-])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)"
-    r"(?:[\s:：|_-]|$))"
-)
 
 
 class ConfigError(ValueError):
@@ -242,7 +270,43 @@ def _group_by_name(config, name):
     return None
 
 
+def _eligible_ai_nodes(config):
+    proxies = config.get("proxies")
+    if not isinstance(proxies, list):
+        return []
+    included = re.compile(AI_INCLUDE_FILTER)
+    excluded = re.compile(AI_EXCLUDE_FILTER)
+    candidates = []
+    seen = set()
+    for proxy in proxies:
+        if not isinstance(proxy, dict):
+            continue
+        name = proxy.get("name")
+        if not isinstance(name, str) or not name or name in seen:
+            continue
+        if str(proxy.get("type", "")).lower() in NON_PROXY_TYPES:
+            continue
+        if not included.search(name) or excluded.search(name):
+            continue
+        seen.add(name)
+        candidates.append(name)
+    return candidates
+
+
+def _provider_names(config):
+    providers = config.get("proxy-providers")
+    if not isinstance(providers, dict):
+        return []
+    return [name for name in providers if isinstance(name, str) and name]
+
+
 def configure_ai_groups(config):
+    """Mirror of the override script's configureGroups; returns the mode.
+
+    "inline" enumerates US nodes from config.proxies; "provider" subscriptions
+    have no enumerable node list, so Ai+ gets use+filter and the core resolves
+    nodes at runtime.
+    """
     groups = config.get("proxy-groups")
     if not isinstance(groups, list):
         raise ConfigError("source config must contain a proxy-groups list")
@@ -250,6 +314,18 @@ def configure_ai_groups(config):
     ai_group = _group_by_name(config, AI_GROUP)
     if ai_group is None:
         raise ConfigError(f"source config is missing required proxy group: {AI_GROUP}")
+
+    nodes = _eligible_ai_nodes(config)
+    providers = _provider_names(config)
+    if nodes:
+        mode = "inline"
+    elif providers:
+        mode = "provider"
+    else:
+        raise ConfigError(
+            "source config exposes neither usable inline proxies nor "
+            "proxy-providers for AI nodes"
+        )
 
     groups[:] = [
         group
@@ -265,65 +341,74 @@ def configure_ai_groups(config):
     ]
     ai_index = groups.index(ai_group)
 
-    proxies = config.get("proxies")
-    if not isinstance(proxies, list):
-        raise ConfigError("source config must contain a proxies list")
-    excluded = re.compile(AI_EXCLUDE_FILTER)
-    ai_candidates = [
-        proxy["name"]
-        for proxy in proxies
-        if isinstance(proxy, dict)
-        and isinstance(proxy.get("name"), str)
-        and proxy["name"]
-        and not excluded.search(proxy["name"])
-        and str(proxy.get("type", "")).lower() != "direct"
-    ]
-    if not ai_candidates:
-        raise ConfigError(f"no eligible nodes remain for {AI_AUTO_GROUP}")
+    if mode == "inline":
+        ai_stable = {
+            "name": AI_STABLE_GROUP,
+            "type": "select",
+            "proxies": nodes,
+        }
+        ai_auto = {
+            "name": AI_AUTO_GROUP,
+            "type": "url-test",
+            "proxies": nodes,
+            "url": AI_PROBE_URL,
+            "interval": 300,
+            "tolerance": 50,
+            "lazy": True,
+            "timeout": 8000,
+            "max-failed-times": 2,
+            "expected-status": 200,
+        }
+        scholar = {
+            "name": SCHOLAR_GROUP,
+            "type": "select",
+            "proxies": [AI_STABLE_GROUP, AI_AUTO_GROUP],
+        }
+        academic = {
+            "name": ACADEMIC_GROUP,
+            "type": "select",
+            "proxies": ["DIRECT", AI_GROUP],
+        }
+        groups[ai_index:ai_index] = [ai_stable, ai_auto, scholar, academic]
 
-    ai_stable = {
-        "name": AI_STABLE_GROUP,
-        "type": "select",
-        "proxies": ai_candidates,
-    }
-    ai_auto = {
-        "name": AI_AUTO_GROUP,
-        "type": "url-test",
-        "proxies": ai_candidates,
-        "url": "https://chatgpt.com/cdn-cgi/trace",
-        "interval": 300,
-        "tolerance": 50,
-        "lazy": True,
-        "timeout": 8000,
-        "max-failed-times": 2,
-        "expected-status": 200,
-    }
-    scholar = {
-        "name": SCHOLAR_GROUP,
-        "type": "select",
-        "proxies": [AI_STABLE_GROUP, AI_AUTO_GROUP],
-    }
-    academic = {
-        "name": ACADEMIC_GROUP,
-        "type": "select",
-        "proxies": ["DIRECT", AI_GROUP],
-    }
-    groups[ai_index:ai_index] = [ai_stable, ai_auto, scholar, academic]
-
-    # Explicit node lists avoid runtime compatibility problems in FlClash
-    # versions that display newer dynamic fields but do not preserve them.
-    ai_group["proxies"] = [AI_STABLE_GROUP, AI_AUTO_GROUP]
-    for key in (
-        "include-all",
-        "include-all-proxies",
-        "include-all-providers",
-        "filter",
-        "exclude-filter",
-        "exclude-type",
-        "default-selected",
-        "empty-fallback",
-    ):
-        ai_group.pop(key, None)
+        # Explicit node lists avoid runtime compatibility problems in FlClash
+        # versions that display newer dynamic fields but do not preserve them.
+        ai_group["proxies"] = [AI_STABLE_GROUP, AI_AUTO_GROUP]
+        for key in (
+            "include-all",
+            "include-all-proxies",
+            "include-all-providers",
+            "filter",
+            "exclude-filter",
+            "exclude-type",
+            "default-selected",
+            "empty-fallback",
+        ):
+            ai_group.pop(key, None)
+    else:
+        scholar = {
+            "name": SCHOLAR_GROUP,
+            "type": "select",
+            "proxies": [AI_GROUP],
+        }
+        academic = {
+            "name": ACADEMIC_GROUP,
+            "type": "select",
+            "proxies": ["DIRECT", AI_GROUP],
+        }
+        groups[ai_index:ai_index] = [scholar, academic]
+        ai_group["use"] = providers
+        ai_group["filter"] = AI_INCLUDE_FILTER
+        ai_group["exclude-filter"] = AI_EXCLUDE_FILTER
+        for key in (
+            "include-all",
+            "include-all-proxies",
+            "include-all-providers",
+            "exclude-type",
+            "default-selected",
+            "empty-fallback",
+        ):
+            ai_group.pop(key, None)
 
     fallback = _group_by_name(config, FALLBACK_GROUP)
     if fallback is None:
@@ -331,9 +416,16 @@ def configure_ai_groups(config):
     choices = [choice for choice in fallback.get("proxies", []) if choice != "DIRECT"]
     fallback["proxies"] = ["DIRECT"] + choices
     fallback.pop("default-selected", None)
+    return mode
 
 
 def fix_provider_paths(config):
+    """Subscription-specific correction, mirrored from the override script.
+
+    Some providers ship Apple and AppleDev rule-providers that share one cache
+    path, which breaks Mihomo startup. This is a targeted hack for that
+    particular subscription — re-evaluate it whenever the subscription changes.
+    """
     providers = config.get("rule-providers")
     if not isinstance(providers, dict):
         raise ConfigError("source config must contain a rule-providers mapping")
@@ -407,9 +499,9 @@ def merge_custom_rules(config, rule_sets):
 def apply_customizations(source_config, rule_sets):
     config = copy.deepcopy(source_config)
     fix_provider_paths(config)
-    configure_ai_groups(config)
+    mode = configure_ai_groups(config)
     merge_custom_rules(config, rule_sets)
-    validate_config(config, rule_sets)
+    validate_config(config, rule_sets, mode)
     return config
 
 
@@ -422,17 +514,20 @@ def _rule_target(rule):
     return parts[2] if len(parts) > 2 else None
 
 
-def validate_config(config, rule_sets):
+def validate_config(config, rule_sets, mode="inline"):
     if not isinstance(config, dict):
         raise ConfigError("configuration root must be a mapping")
 
     groups = config.get("proxy-groups")
     proxies = config.get("proxies")
-    providers = config.get("rule-providers")
+    proxy_providers = config.get("proxy-providers")
+    rule_providers = config.get("rule-providers")
     rules = config.get("rules")
-    if not isinstance(groups, list) or not isinstance(proxies, list):
-        raise ConfigError("configuration requires proxies and proxy-groups lists")
-    if not isinstance(providers, dict) or not isinstance(rules, list):
+    if not isinstance(groups, list):
+        raise ConfigError("configuration requires a proxy-groups list")
+    if not isinstance(proxies, list) and not isinstance(proxy_providers, dict):
+        raise ConfigError("configuration requires a proxies list or proxy-providers mapping")
+    if not isinstance(rule_providers, dict) or not isinstance(rules, list):
         raise ConfigError("configuration requires rule-providers and rules")
 
     group_names = [group.get("name") for group in groups]
@@ -440,12 +535,14 @@ def validate_config(config, rule_sets):
         raise ConfigError("proxy group names must be unique")
 
     proxy_names = {
-        proxy.get("name") for proxy in proxies if isinstance(proxy, dict) and proxy.get("name")
+        proxy.get("name")
+        for proxy in (proxies if isinstance(proxies, list) else [])
+        if isinstance(proxy, dict) and proxy.get("name")
     }
     valid_targets = set(group_names) | proxy_names | BUILTIN_TARGETS
 
     seen_paths = {}
-    for name, provider in providers.items():
+    for name, provider in rule_providers.items():
         if not isinstance(provider, dict):
             raise ConfigError(f"rule provider must be a mapping: {name}")
         path = provider.get("path")
@@ -461,7 +558,7 @@ def validate_config(config, rule_sets):
             raise ConfigError(f"rule must be a string: {rule!r}")
         parts = [part.strip() for part in rule.split(",")]
         if parts[0] == "RULE-SET":
-            if len(parts) < 3 or parts[1] not in providers:
+            if len(parts) < 3 or parts[1] not in rule_providers:
                 raise ConfigError(f"rule references missing provider: {rule}")
         target = _rule_target(rule)
         if target and target not in valid_targets:
@@ -479,14 +576,20 @@ def validate_config(config, rule_sets):
     scholar = _group_by_name(config, SCHOLAR_GROUP)
     academic = _group_by_name(config, ACADEMIC_GROUP)
     fallback = _group_by_name(config, FALLBACK_GROUP)
-    if not ai_stable or not ai_stable.get("proxies"):
-        raise ConfigError(f"{AI_STABLE_GROUP} must contain explicit proxy nodes")
-    if not ai_auto or not ai_auto.get("proxies"):
-        raise ConfigError(f"{AI_AUTO_GROUP} must contain explicit proxy nodes")
-    if not ai_group or ai_group.get("proxies") != [AI_STABLE_GROUP, AI_AUTO_GROUP]:
-        raise ConfigError(f"{AI_GROUP} must prefer stable selection and keep auto as backup")
-    if not scholar or scholar.get("proxies") != [AI_STABLE_GROUP, AI_AUTO_GROUP]:
-        raise ConfigError(f"{SCHOLAR_GROUP} must share the stable AI exit")
+    if mode == "provider":
+        if not ai_group or not ai_group.get("use") or ai_group.get("filter") != AI_INCLUDE_FILTER:
+            raise ConfigError(f"{AI_GROUP} must select provider nodes with the US whitelist filter")
+        if not scholar or scholar.get("proxies") != [AI_GROUP]:
+            raise ConfigError(f"{SCHOLAR_GROUP} must follow the provider-backed {AI_GROUP} exit")
+    else:
+        if not ai_stable or not ai_stable.get("proxies"):
+            raise ConfigError(f"{AI_STABLE_GROUP} must contain explicit proxy nodes")
+        if not ai_auto or not ai_auto.get("proxies"):
+            raise ConfigError(f"{AI_AUTO_GROUP} must contain explicit proxy nodes")
+        if not ai_group or ai_group.get("proxies") != [AI_STABLE_GROUP, AI_AUTO_GROUP]:
+            raise ConfigError(f"{AI_GROUP} must prefer stable selection and keep auto as backup")
+        if not scholar or scholar.get("proxies") != [AI_STABLE_GROUP, AI_AUTO_GROUP]:
+            raise ConfigError(f"{SCHOLAR_GROUP} must share the stable AI exit")
     if not academic or academic.get("proxies") != ["DIRECT", AI_GROUP]:
         raise ConfigError(f"{ACADEMIC_GROUP} must prefer DIRECT and keep {AI_GROUP} as backup")
     if not fallback or fallback.get("proxies", [None])[0] != "DIRECT":
@@ -542,8 +645,9 @@ def build_server_policy(rule_sets):
                 "name": AI_GROUP,
                 "type": "url-test",
                 "use": [SERVER_PROVIDER],
+                "filter": AI_INCLUDE_FILTER,
                 "exclude-filter": AI_EXCLUDE_FILTER,
-                "url": "https://chatgpt.com/cdn-cgi/trace",
+                "url": AI_PROBE_URL,
                 "interval": 300,
                 "tolerance": 50,
                 "lazy": True,

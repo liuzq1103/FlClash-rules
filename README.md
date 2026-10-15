@@ -19,7 +19,7 @@
 
 服务器 subscription provider
   → dist/server-policy.yaml
-  → Ai+/学术策略组 + 129 条个性化规则 + MATCH,DIRECT
+  → Ai+/学术策略组 + 128 条个性化规则 + MATCH,DIRECT
   → liuzq 用户级 Mihomo
 ```
 
@@ -27,7 +27,9 @@
 - `rules/*.yaml` 是自定义规则的唯一来源。
 - `clash.py` 将分类规则展开为普通 Mihomo 规则，并生成 `dist/override.js` 与 `dist/server-policy.yaml`。
 - 两个生成物都不联网、不读取 GitHub、不包含订阅地址、Listener 凭据或节点内容。
-- 脚本在副本上修改并完成自检；任何异常都返回原始配置。
+- 脚本在副本上修改并完成自检，成功后在配置上留下可见标记 `__flclashRules = { applied: true, ... }`；在客户端"预览"里检查该字段即可区分"覆写成功"和"覆写崩溃返回原配置"。
+- 覆写不再静默失败或整体放弃：缺少 `Ai+`、`漏网之鱼` 或整个 `proxy-groups` 时只跳过对应组配置并记录 warning，规则仍然覆写；只有既拿不到内联节点也拿不到 `proxy-providers` 时才返回原始配置。
+- 同时支持节点内联（`proxies` 数组）和 `proxy-providers` 型订阅：后者无法在脚本阶段枚举节点名，脚本会保留订阅自己的 `Ai+` 组并写入 `use` + 美国 `filter`，由内核在运行时从 provider 拉取美国节点。
 
 ## 目录
 
@@ -73,8 +75,8 @@ python clash.py --check
 1. 在 Clash Verge Rev 中保留并更新自己的原始订阅配置。
 2. 给这条订阅配置“扩展脚本”，粘贴 `dist/override.js` 的完整内容。
 3. 不要把脚本放到“全局扩展脚本”；全局扩展配置也保持为空。
-4. 先使用“预览”确认存在 `Ai稳定选择`、`Ai测速备用`、`学术搜索`、`学术访问`，且规则仍以原订阅的 `MATCH` 结束。
-5. 启用订阅后，在 `Ai稳定选择` 中固定一个可正常打开 ChatGPT 的非港澳台节点；`Ai+` 和 `学术搜索` 会共同使用它。
+4. 先使用“预览”确认存在 `Ai稳定选择`、`Ai测速备用`、`学术搜索`、`学术访问`，规则仍以原订阅的 `MATCH` 结束，且配置上有 `__flclashRules: { applied: true }` 标记。
+5. 启用订阅后，在 `Ai稳定选择` 中固定一个可正常打开 ChatGPT 的美国节点；`Ai+` 和 `学术搜索` 会共同使用它。
 
 如果扩展后出现网络异常，直接禁用这条订阅的扩展脚本即可恢复原始订阅。
 
@@ -86,8 +88,8 @@ python clash.py --check
 2. 覆写模式选择 **脚本**，不要选择“标准”或“自定义”。
 3. 新建脚本，例如命名为 `FlClash 个性化规则`，粘贴 `dist/override.js` 全文并保存。
 4. 回到该订阅，在“覆写脚本”中选中刚创建的脚本。
-5. 点“预览”，确认存在 `Ai稳定选择`、`Ai测速备用`、`学术搜索`、`学术访问`，并确认最后一条仍为原订阅的 `MATCH`。
-6. 启用该订阅；在 `Ai稳定选择` 选择可用的非港澳台节点，在 `学术访问` 选择 `DIRECT`。
+5. 点“预览”，确认存在 `Ai稳定选择`、`Ai测速备用`、`学术搜索`、`学术访问`，确认最后一条仍为原订阅的 `MATCH`，且配置上有 `__flclashRules: { applied: true }` 标记。
+6. 启用该订阅；在 `Ai稳定选择` 选择可用的美国节点，在 `学术访问` 选择 `DIRECT`。
 
 FlClash 的脚本是与订阅关联的，不要只在“工具 → 进阶配置 → 脚本”中保存后就结束；必须回到订阅覆写页面选中它。订阅更新后脚本会重新应用，不需要重新粘贴。
 
@@ -97,17 +99,24 @@ FlClash 的脚本是与订阅关联的，不要只在“工具 → 进阶配置 
 
 ### `Ai稳定选择`
 
-每次加载订阅时读取当前 `proxies`，排除：
+每次加载订阅时读取当前 `proxies`，用**正向白名单**只保留美国节点（`🇺🇸` / `美国` / `美國` / `United States` / 有界 `US`、`USA`），同时剔除：
 
-- 香港、澳门、台湾节点和常见中英文缩写；
 - 流量、到期、同步、套餐、官网和客服等提示节点；
-- `DIRECT` 等非代理节点。
+- `DIRECT`、`REJECT`、`DNS` 等内置非代理节点。
 
-该组使用 `select` 并作为 `Ai+` 的默认出口。客户端会按组名记住人工选择，避免浏览过程中因延迟变化切换公网 IP。订阅原有的全局 `自动选择` 完全不修改，因此普通业务仍可继续使用香港节点。
+日、新、德、芬兰等节点大概率被 OpenAI / Anthropic 判地域限制，因此不进 AI 池（订阅原有的全局 `自动选择` 完全不修改，普通业务仍可用它们）。命中白名单的节点即使名字里混有"香港"字样也会保留，防止机场改名误伤。将来要放宽到"美国+日本"之类，改模板里的 `AI_INCLUDE_SOURCE` 即可，不要退回成排除式。
+
+该组使用 `select` 并作为 `Ai+` 的默认出口。客户端会按组名记住人工选择，避免浏览过程中因延迟变化切换公网 IP。
 
 ### `Ai测速备用`
 
-备用组使用 `https://chatgpt.com/cdn-cgi/trace` 检查候选节点，要求 HTTP `200`，只在人工稳定节点失效时手动切换使用。它不再用 Google 204 代替 ChatGPT 可达性检查，也不再作为 `Ai+` 默认项。[Mihomo 的 `expected-status` 说明](https://wiki.metacubex.one/en/config/proxy-groups/)
+备用组用主探针 `https://chatgpt.com/cdn-cgi/trace` 检查候选节点，要求 HTTP `200`，只在人工稳定节点失效时手动切换使用。[Mihomo 的 `expected-status` 说明](https://wiki.metacubex.one/en/config/proxy-groups/)
+
+**探针说明**：
+
+- 主探针验证的是"节点真的能访问 OpenAI"，能筛出"能上网但被 OpenAI 封 IP"的节点；代价是它就是被代理的目标服务本身，属于单点。
+- 备用探针 `https://www.gstatic.com/generate_204` 只验证基础连通性，**不能**发现 OpenAI 的 IP 封禁；主探针失效或被 Cloudflare 收紧时才切换到它。
+- **修改任何探针 URL 前，请先用浏览器/直连环境确认端点可访问**，再改 `templates/override.js.tpl` 中的 `AI_PROBE_URL` 并重新生成。
 
 ### `Ai+`
 
@@ -142,7 +151,7 @@ Gemini 访问有一项有意的例外：`google.com`、`www.google.com`、`accou
 6. 其他明确直连 `DIRECT`
 7. 原始订阅规则
 
-AI 规则高于宽泛直连规则，例如 Copilot 会先进入 `Ai+`，之后 Microsoft 才可能匹配 `DIRECT`。
+AI 规则高于宽泛直连规则（例如 ChatGPT 域名先进 `Ai+`，之后其他直连规则才可能兜底）。Copilot 已移到 `direct.yaml`：它在任何地区都可用，不应绑定美国节点。
 
 ## 日常修改
 
@@ -208,6 +217,14 @@ node --test tests/*.js
 - ChatGPT 核心域名由本项目明确接管，不再完全依赖订阅的远程 OpenAI provider。
 - Science、PNAS、Oxford Academic、Taylor & Francis 和 Cell 改为 `学术访问`：默认恢复直连和机构 IP，需要处理 Cloudflare Challenge 时可一键切到 `Ai+`，不再永久占用代理出口。
 - 原 `Ai自动选择` 被替换为“人工稳定出口优先、ChatGPT 测速备用”，避免只因 Google 延迟变化切换 AI 公网 IP。
+- Claude 修复：补齐 `claude.ai`（Anthropic 主域/网页入口，此前实测直连会跳转 `claude.com/app-unavailable-in-region`）、`anthropic.com`、`claudeusercontent.com`；旧注释“订阅已覆盖 claude.ai”是错误的，已删除。
+- AI 节点选择从“排除港澳台”改为“正向美国白名单”（`AI_INCLUDE`）；`AI_EXCLUDE` 收窄为只剔除机场信息行（Expire/Traffic/Sync/官网等）。
+- 覆写脚本支持 `proxy-providers` 型订阅（`Ai+` 带运行时 filter），并在成功/降级时留下 `__flclashRules` 标记；缺组只降级不再整体放弃。
+- 测速探针增加备用端点说明（`gstatic.com/generate_204`）及主/备筛选能力差异文档。
+- 删除实测无代理收益的 `default.exp-tas.com`、`intercom.io`、`roboflow.com`，删除被 `googleapis.com` 覆盖的 `generativelanguage.googleapis.com`；`githubcopilot.com` 移到 `direct.yaml`。
+- `direct.yaml` 中的 Adobe 域名保留并注明理由：多数是独立注册域，无法无损压缩为 `adobe.com`/`adobe.io` 后缀。
+- `tailscale.yaml` 增加共享服务器 CGNAT 警告；本仓库主要面向 Windows/macOS 单用户桌面。
+- `fixProviderPaths` 的 Apple/AppleDev 路径修正已标注为特定订阅专用 hack，换订阅需重新评估。
 
 ## 命令
 
@@ -243,7 +260,7 @@ python webui.py --no-browser   # 不自动打开浏览器
 
 服务器策略固定为：
 
-- `Ai+`：动态使用 `subscription` provider；
+- `Ai+`：动态使用 `subscription` provider，并用与美国白名单一致的 `filter` 只选美国节点；
 - `学术搜索`：默认 `Ai+`，保留 `DIRECT`；
 - `学术访问`：默认 `DIRECT`，保留 `Ai+`；
 - SEA-AD S3：精确 `DIRECT`；

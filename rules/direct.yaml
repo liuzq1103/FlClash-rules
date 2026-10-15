@@ -1,8 +1,12 @@
 payload:
-  # Microsoft services stay direct; Custom-AI has higher priority for Copilot domains.
+  # Microsoft services stay direct.
   - DOMAIN-SUFFIX,bing.com
   - DOMAIN-SUFFIX,microsoft.com
   - DOMAIN-SUFFIX,xboxlive.com
+
+  # GitHub Copilot works from any region and must not be pinned to US AI
+  # nodes; moved here from ai.yaml for that reason.
+  - DOMAIN-SUFFIX,githubcopilot.com
 
   # SEA-AD research data must never consume a paid proxy node.
   - DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com
@@ -10,7 +14,13 @@ payload:
   # Adobe package endpoint
   - DOMAIN,cc-ext-prod-pkgs.s3.amazonaws.com
 
-  # Adobe services and content domains retained from the legacy configuration
+  # Adobe services and content domains retained from the legacy configuration.
+  # Retention reason (do not re-compress without checking): most of these are
+  # independent registrable domains (adobedtm.com, adobelogin.com,
+  # adobesc.com, ...), NOT subdomains of adobe.com, so collapsing them into
+  # DOMAIN-SUFFIX,adobe.io / adobe.com would silently lose coverage. They are
+  # all direct-reachable, harmless as DIRECT, and defensive against
+  # subscriptions that would otherwise route Adobe traffic through a proxy.
   - DOMAIN-SUFFIX,10xfotolia.com
   - DOMAIN-SUFFIX,2o7.net
   - DOMAIN-SUFFIX,acrobat.com

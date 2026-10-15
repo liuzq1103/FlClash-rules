@@ -1,3 +1,9 @@
+# WARNING for shared servers: the CGNAT rule below forces the whole
+# 100.64.0.0/10 range to DIRECT. On a multi-user Linux server this can
+# interfere with other users' Tailscale traffic; confirm it is safe there,
+# or remove the two IP rules (keep the domain rules) when not needed.
+# This repository primarily targets single-user Windows/macOS desktops,
+# where forcing Tailscale traffic direct is the desired behavior.
 payload:
   # Tailscale control plane, DERP relays and MagicDNS names
   - DOMAIN-SUFFIX,tailscale.com

@@ -80,13 +80,32 @@ class RuleLoadingTests(unittest.TestCase):
             [rule_set["name"] for rule_set in self.rule_sets],
             [
                 "Custom-Reject",
-                "Custom-AI",
                 "Custom-Scholar",
+                "Custom-AI",
                 "Custom-Academic",
                 "Custom-Tailscale",
                 "Custom-Direct",
             ],
         )
+
+    def test_scholar_rules_precede_every_ai_rule(self):
+        # Defensive ordering: mihomo is first-match, so the exact
+        # scholar.google.com rules must come before ANY Ai+ rule (let alone a
+        # hypothetical DOMAIN-SUFFIX,google.com) or they would be dead.
+        expanded = clash._expand_custom_rules(self.rule_sets)
+        scholar_indices = [
+            index
+            for index, rule in enumerate(expanded)
+            if rule
+            in ("DOMAIN,scholar.google.com,学术搜索", "DOMAIN,scholar.google.com.hk,学术搜索")
+        ]
+        self.assertEqual(len(scholar_indices), 2)
+        first_ai = next(
+            (index for index, rule in enumerate(expanded) if rule.endswith(",Ai+")),
+            None,
+        )
+        self.assertIsNotNone(first_ai)
+        self.assertLess(max(scholar_indices), first_ai)
 
     def test_confirmed_omissions_are_filled(self):
         payload = {

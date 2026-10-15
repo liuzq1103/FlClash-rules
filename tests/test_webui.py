@@ -228,8 +228,8 @@ class StateAndBuildTests(unittest.TestCase):
             [item["file"] for item in state["files"]],
             [
                 "reject.yaml",
-                "ai.yaml",
                 "scholar.yaml",
+                "ai.yaml",
                 "academic.yaml",
                 "tailscale.yaml",
                 "direct.yaml",

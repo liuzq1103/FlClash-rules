@@ -144,12 +144,14 @@ Gemini 访问有一项有意的例外：`google.com`、`www.google.com`、`accou
 `rules/index.yml` 从上到下就是最终优先级：
 
 1. 广告 `REJECT`
-2. AI/开发服务 `Ai+`
-3. Google Scholar `学术搜索`
+2. Google Scholar `学术搜索`
+3. AI/开发服务 `Ai+`
 4. 已确认学术平台 `学术访问`（默认 `DIRECT`，`Ai+` 备用）
 5. Tailscale `DIRECT`
 6. 其他明确直连 `DIRECT`
 7. 原始订阅规则
+
+Scholar 的两条精确 `DOMAIN` 规则排在**所有** `Ai+` 规则之前是防御性设计：mihomo 首个匹配生效，这样即使将来（或旧版脚本里）重新出现 `DOMAIN-SUFFIX,google.com` 之类的宽后缀规则，`scholar.google.com` 也仍会命中 `学术搜索`。两个组的默认成员相同（`Ai稳定选择`/`Ai测速备用`），实际出口一致；区别仅在于手动切换互相独立——为 ChatGPT 换 `Ai+` 节点时不会连带影响 Scholar。
 
 AI 规则高于宽泛直连规则（例如 ChatGPT 域名先进 `Ai+`，之后其他直连规则才可能兜底）。Copilot 已移到 `direct.yaml`：它在任何地区都可用，不应绑定美国节点。
 

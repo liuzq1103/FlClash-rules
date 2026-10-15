@@ -1,14 +1,17 @@
 rule-sets:
-  # Priority is top-to-bottom. Keep REJECT before AI, and AI exceptions before DIRECT.
+  # Priority is top-to-bottom. Keep REJECT before AI, and AI exceptions before
+  # DIRECT. Scholar's exact DOMAIN rules deliberately precede ALL Ai+ rules:
+  # mihomo is first-match, so a future (or stale) DOMAIN-SUFFIX,google.com in
+  # Ai+ must never shadow DOMAIN,scholar.google.com -> 学术搜索.
   - name: Custom-Reject
     file: reject.yaml
     target: REJECT
-  - name: Custom-AI
-    file: ai.yaml
-    target: Ai+
   - name: Custom-Scholar
     file: scholar.yaml
     target: 学术搜索
+  - name: Custom-AI
+    file: ai.yaml
+    target: Ai+
   - name: Custom-Academic
     file: academic.yaml
     target: 学术访问

@@ -19,17 +19,59 @@
 
 服务器 subscription provider
   → dist/server-policy.yaml
-  → Ai+/学术策略组 + 128 条个性化规则 + MATCH,DIRECT
+  → PROXY/Ai+/Dev+/学术策略组 + 服务器专属规则 + MATCH,DIRECT
   → liuzq 用户级 Mihomo
 ```
 
 - 原始订阅继续负责节点、DNS、通用 provider 和基础分流。
-- `rules/*.yaml` 是自定义规则的唯一来源。
+- `rules/*.yaml` 是自定义规则的唯一来源；`rules/index.yml` 决定优先级，并为每个 rule-set 声明客户端 / 服务器各自的策略目标（见「分环境产物」）。
 - `clash.py` 将分类规则展开为普通 Mihomo 规则，并生成 `dist/override.js` 与 `dist/server-policy.yaml`。
 - 两个生成物都不联网、不读取 GitHub、不包含订阅地址、Listener 凭据或节点内容。
-- 脚本在副本上修改并完成自检，成功后在配置上留下可见标记 `__flclashRules = { applied: true, ... }`；在客户端"预览"里检查该字段即可区分"覆写成功"和"覆写崩溃返回原配置"。
-- 覆写不再静默失败或整体放弃：缺少 `Ai+`、`漏网之鱼` 或整个 `proxy-groups` 时只跳过对应组配置并记录 warning，规则仍然覆写；只有既拿不到内联节点也拿不到 `proxy-providers` 时才返回原始配置。
-- 同时支持节点内联（`proxies` 数组）和 `proxy-providers` 型订阅：后者无法在脚本阶段枚举节点名，脚本会保留订阅自己的 `Ai+` 组并写入 `use` + 美国 `filter`，由内核在运行时从 provider 拉取美国节点。
+- 脚本在副本上修改并完成自检，成功后在配置上留下可见标记 `__flclashRules = { applied: true, mode, rules, warnings }`；在客户端「预览」里检查该字段即可区分"覆写成功"和"覆写崩溃返回原配置"。
+
+### 换机场时如何适配
+
+脚本对机场的假设只有三条，其余一律降级处理，**永远不会产出 mihomo 无法加载的配置**：
+
+1. 内联节点（`proxies`）或 `proxy-providers` 至少有一个可用来取节点；
+2. 节点名能命中美国白名单（`AI_INCLUDE`）；
+3. 订阅里存在 `漏网之鱼`（仅用于把 DIRECT 放第一项）。
+
+对应的降级行为（全部记录在 `__flclashRules.warnings` 里）：
+
+| 情况 | 行为 |
+|---|---|
+| 订阅没有 `Ai+` 组 | 脚本**新建**一个（放在 `漏网之鱼` 之前），AI/Scholar/Academic 规则照常生效 |
+| 机场把 `Ai+` 定义成 url-test | 强制改回 `select`，再挂稳定组与测速组 |
+| 只有 `proxy-providers` | 同样建三段式组，用 `use` + `filter` 让内核运行时拉取美国节点，人工仍可在 `Ai稳定选择` 挑选 |
+| 没有任何可用美国节点 | 只注入 DIRECT/REJECT 类规则（广告、直连、Tailscale），AI 相关规则**跳过而不是指向不存在的组** |
+| 没有 `漏网之鱼` | 跳过兜底调整，其余照做 |
+| 整个 `proxy-groups` 缺失 | 只注入 DIRECT/REJECT 类规则 |
+| 组名重复等无法修复的问题 | 返回原始配置，并把完整 stack 打到 console |
+
+`AI_EXCLUDE` 专门剔除机场塞进来的信息行，已覆盖多家机场的写法：`剩余流量: 876.18 GB`、`距离下次重置剩余：24 天`、`套餐到期：2027-10-08`、`官网 xxx.xyz 群组 t.me/...`、`Expire:`、`Traffic:`、`Sync:`、`🇺🇳 官网 …`。真实节点名（含 `| DDNSv4`、`(Fallback)` 之类后缀）不受影响。
+
+## 分环境产物
+
+同一份 `rules/*.yaml` 编译出两份产物，`rules/index.yml` 用两个可选字段区分：
+
+- `server-target`：服务器产物使用的策略目标，缺省与 `target` 相同；
+- `artifacts`：该 rule-set 进入哪些产物，缺省两个都要。
+
+当前用法：
+
+| rule-set | 客户端 | 服务器 |
+|---|---|---|
+| `Custom-Reject`（广告） | `REJECT` | 不生成 |
+| `Custom-Priority`（必须最先的直连例外） | `DIRECT` | `DIRECT` |
+| `Custom-Scholar` | `学术搜索` | `学术搜索` |
+| `Custom-AI` | `Ai+` | `Ai+` |
+| `Custom-Dev`（GitHub / HF / Docker / Cursor） | `Ai+` | `Dev+` |
+| `Custom-Academic` | `学术访问` | `学术访问` |
+| `Custom-Tailscale` | `DIRECT` | 不生成 |
+| `Custom-Direct`（Adobe / Microsoft） | `DIRECT` | 不生成 |
+
+服务器不需要 Adobe / Microsoft / 广告拦截 / Tailscale，因此这些 rule-set 不进入 `dist/server-policy.yaml`。
 
 ## 目录
 
@@ -38,13 +80,15 @@ FlClash/
 ├── clash.py
 ├── requirements.txt
 ├── rules/
-│   ├── index.yml       # 优先级、文件和目标策略
-│   ├── reject.yaml     # 广告拦截
-│   ├── ai.yaml         # AI、开发服务、学术代理例外
+│   ├── index.yml       # 优先级、文件、各环境策略目标
+│   ├── reject.yaml     # 广告拦截（仅客户端）
+│   ├── priority.yaml   # 必须最先命中的直连例外
+│   ├── ai.yaml         # AI 服务与 Google 系
+│   ├── dev.yaml        # GitHub / HuggingFace / Docker / Cursor
 │   ├── scholar.yaml    # Google Scholar 稳定出口
 │   ├── academic.yaml   # 已确认需要直连的学术平台
-│   ├── tailscale.yaml  # Tailscale 域名与地址段
-│   └── direct.yaml     # 其他明确直连
+│   ├── tailscale.yaml  # Tailscale 域名与地址段（仅客户端）
+│   └── direct.yaml     # Adobe / Microsoft 等明确直连（仅客户端）
 ├── templates/
 │   └── override.js.tpl
 ├── dist/
@@ -121,9 +165,9 @@ FlClash 的脚本是与订阅关联的，不要只在“工具 → 进阶配置 
 
 ### `学术搜索`
 
-仅接管 `scholar.google.com` 和 `scholar.google.com.hk`，并与 `Ai+` 共用 `Ai稳定选择`，避免搜索过程中频繁切换出口 IP。YouTube 和其他未明确列出的 Google 子域仍沿用订阅策略。
+仅接管 `scholar.google.com` 和 `scholar.google.com.hk`，并与 `Ai+` 共用 `Ai稳定选择`，避免搜索过程中频繁切换出口 IP。
 
-Gemini 访问有一项有意的例外：`google.com`、`www.google.com`、`accounts.google.com`、`apis.google.com` 和 `ogs.google.com` 使用 `Ai+`。Gemini 会跳转到其中的登录、初始化或 `google.com/sorry` 风控页面；若这些请求落到订阅的 `Google` 组，就可能与 `gemini.google.com` 使用不同公网 IP，从而触发“异常流量”。这里全部使用精确 `DOMAIN`，没有恢复过宽的 `DOMAIN-SUFFIX,google.com`，因此 Scholar 仍进入 `学术搜索`，YouTube 也不受影响。
+Google 系其余流量统一由 `DOMAIN-SUFFIX,google.com`（以及 `googleapis.com`、`gstatic.com`、`googleusercontent.com`、`ggpht.com`、`deepmind.com`）走 `Ai+`，覆盖 Gemini / AI Studio / Colab / NotebookLM / Docs / Drive，并保证 Gemini 会话全程同一出口 IP。Scholar 因为在规则顺序里排在前面，仍然进入 `学术搜索`；YouTube 不受影响。
 
 ### `学术访问`
 
@@ -136,21 +180,39 @@ Gemini 访问有一项有意的例外：`google.com`、`www.google.com`、`accou
 
 `challenges.cloudflare.com` 是多个网站共用的验证域名，规则引擎无法知道它来自 ChatGPT 还是 Science，因此继续固定走 `Ai+` 以保护 ChatGPT。平时 `学术访问` 保持 `DIRECT`；若 Science 出现验证循环，将 `学术访问` 切到 `Ai+` 后刷新，主站与验证请求便会使用同一代理出口。这个切换不影响 Tailscale、普通 Google 或其他直连规则。
 
+## 服务器策略组
+
+服务器产物（`dist/server-policy.yaml`）与客户端同构，另外多两个组：
+
+| 组 | 类型 | 用途 |
+|---|---|---|
+| `PROXY` | url-test | 全地区最快节点，`use: [subscription]`，仅剔除信息行，探针 `generate_204` |
+| `Ai稳定选择` | select | 美国节点人工锁定 |
+| `Ai测速备用` | url-test | 美国节点 + ChatGPT 探针 + `expected-status: 200` |
+| `Ai+` | select | `[Ai稳定选择, Ai测速备用]` |
+| `Dev+` | select | 开发流量（GitHub / HuggingFace / Docker / Cursor），可用美国或香港节点，默认项 `PROXY` |
+| `学术搜索` | select | `[Ai+, DIRECT]` |
+| `学术访问` | select | `[DIRECT, Ai+]` |
+
+`Dev+` 的 filter 在美国白名单基础上加香港节点：开发流量不受地域限制，大文件下载和 CI 用近端出口更快；AI 与 Google 系流量不走这个组。
+
 ## 规则优先级
 
 `rules/index.yml` 从上到下就是最终优先级：
 
-1. 广告 `REJECT`
-2. Google Scholar `学术搜索`
-3. AI/开发服务 `Ai+`
-4. 已确认学术平台 `学术访问`（默认 `DIRECT`，`Ai+` 备用）
-5. Tailscale `DIRECT`
-6. 其他明确直连 `DIRECT`
-7. 原始订阅规则
+1. 广告 `REJECT`（仅客户端）
+2. 必须最先命中的直连例外 `DIRECT`
+3. Google Scholar `学术搜索`
+4. AI 服务 `Ai+`
+5. 开发服务 `Ai+`（服务器为 `Dev+`）
+6. 已确认学术平台 `学术访问`（默认 `DIRECT`，`Ai+` 备用）
+7. Tailscale `DIRECT`（仅客户端）
+8. 其他明确直连 `DIRECT`（仅客户端）
+9. 原始订阅规则
 
-Scholar 的两条精确 `DOMAIN` 规则排在**所有** `Ai+` 规则之前是防御性设计：mihomo 首个匹配生效，这样即使将来（或旧版脚本里）重新出现 `DOMAIN-SUFFIX,google.com` 之类的宽后缀规则，`scholar.google.com` 也仍会命中 `学术搜索`。两个组的默认成员相同（`Ai稳定选择`/`Ai测速备用`），实际出口一致；区别仅在于手动切换互相独立——为 ChatGPT 换 `Ai+` 节点时不会连带影响 Scholar。
+Scholar 的两条精确 `DOMAIN` 规则排在**所有** `Ai+` 规则之前是防御性设计：mihomo 首个匹配生效，`DOMAIN-SUFFIX,google.com` 因此不会遮蔽它们。两个组的默认成员相同（`Ai稳定选择`/`Ai测速备用`），实际出口一致；区别仅在于手动切换互相独立——为 ChatGPT 换 `Ai+` 节点时不会连带影响 Scholar。
 
-AI 规则高于宽泛直连规则（例如 ChatGPT 域名先进 `Ai+`，之后其他直连规则才可能兜底）。Copilot 已移到 `direct.yaml`：它在任何地区都可用，不应绑定美国节点。
+GitHub、Copilot、HuggingFace、Docker、Cursor 归在 `dev.yaml`：客户端与 AI 同走美国出口（GitHub API 限额更高、HF/Docker 更稳），服务器走 `Dev+` 可用香港或最快节点。
 
 ## 日常修改
 
@@ -173,6 +235,19 @@ payload:
 ```
 
 如果新增学术站偶尔出现 Cloudflare Challenge，仍放在 `academic.yaml`，先保持 `学术访问 = DIRECT`；验证循环时临时切换 `学术访问 = Ai+`。只有明确要求长期使用代理、且不依赖本地机构 IP 的科研服务才加入 `ai.yaml`。
+
+需要代理的开发服务（GitHub / HuggingFace / Docker / Cursor）放 `dev.yaml`；客户端自动走 `Ai+`，服务器自动走 `Dev+`，无需两处维护。
+
+想让某个 rule-set 只进客户端或只进服务器，改 `index.yml` 的 `artifacts`；想让服务器用不同的策略组，改 `server-target`：
+
+```yaml
+- name: Custom-Dev
+  file: dev.yaml
+  target: Ai+
+  server-target: Dev+
+```
+
+修改节点筛选规则时，`clash.py` 与 `templates/override.js.tpl` 必须同步改：白名单 `AI_INCLUDE_FILTER` / `AI_INCLUDE_SOURCE`、信息行 `AI_EXCLUDE_FILTER` / `AI_EXCLUDE_SOURCE`、服务器 `Dev+` 的 `DEV_INCLUDE_FILTER`。
 
 修改 Tailscale：
 

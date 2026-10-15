@@ -14,6 +14,21 @@ US_NODES = [
     "US-01",
 ]
 
+# A second airport with food-themed names, "| protocol" suffixes and four
+# different info lines. It has no Ai+ group at all.
+NANO_US_NODES = [
+    "🇺🇸 狮城沙嗲串 | IPv4",
+    "🇺🇸 美国龙虾卷 | DDNSv4",
+    "🇺🇸 美国奶油派 | CT IP",
+]
+NANO_OTHER_NODES = ["🇸🇬 狮城肉骨茶 | IPv4", "🇯🇵 日本天妇罗 | DDNSv4", "🇭🇰 香港碳仔雞 | IPv4"]
+NANO_INFO_NODES = [
+    "剩余流量: 876.18 GB",
+    "距离下次重置剩余：24 天",
+    "套餐到期：2027-10-08",
+    "官网 小黑子.xyz chicken.fufufu.sbs 群组 t.me/nekoport",
+]
+
 
 def sample_config():
     proxies = [
@@ -23,13 +38,8 @@ def sample_config():
         {"name": US_NODES[3], "type": "ss", "server": "us-ascii.example", "port": 443},
         {"name": "🇩🇪 德国-01", "type": "ss", "server": "de.example", "port": 443},
         {"name": "🇭🇰 香港-01", "type": "ss", "server": "hk.example", "port": 443},
-        {"name": "🇹🇼 台湾-01", "type": "ss", "server": "tw.example", "port": 443},
         {"name": "Russia-Moscow-01", "type": "ss", "server": "ru.example", "port": 443},
-        {"name": "Australia-Sydney-01", "type": "ss", "server": "au.example", "port": 443},
         {"name": "Expire: 2099-01-01", "type": "ss", "server": "info.example", "port": 443},
-        {"name": "Traffic: 316.97GB | 1.66TB", "type": "ss", "server": "info2.example", "port": 443},
-        {"name": "Sync: 2026-10-15 20:42:00", "type": "ss", "server": "info3.example", "port": 443},
-        {"name": "🇺🇳 官网 helloshudong.com|v202605", "type": "ss", "server": "info4.example", "port": 443},
     ]
     names = [proxy["name"] for proxy in proxies]
     return {
@@ -70,6 +80,23 @@ def sample_config():
     }
 
 
+def nanoport_config():
+    names = NANO_US_NODES + NANO_OTHER_NODES + NANO_INFO_NODES
+    return {
+        "proxies": [
+            {"name": name, "type": "vless", "server": f"n{i}.example", "port": 443}
+            for i, name in enumerate(names)
+        ],
+        "proxy-groups": [
+            {"name": "自动选择", "type": "url-test", "proxies": names},
+            {"name": "战略转移", "type": "url-test", "proxies": names},
+            {"name": "漏网之鱼", "type": "select", "proxies": ["自动选择", "DIRECT"]},
+        ],
+        "rule-providers": {},
+        "rules": ["DOMAIN-SUFFIX,bilibili.com,DIRECT", "MATCH,漏网之鱼"],
+    }
+
+
 class RuleLoadingTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -80,19 +107,30 @@ class RuleLoadingTests(unittest.TestCase):
             [rule_set["name"] for rule_set in self.rule_sets],
             [
                 "Custom-Reject",
+                "Custom-Priority",
                 "Custom-Scholar",
                 "Custom-AI",
+                "Custom-Dev",
                 "Custom-Academic",
                 "Custom-Tailscale",
                 "Custom-Direct",
             ],
         )
 
+    def test_desktop_only_rule_sets(self):
+        by_name = {rule_set["name"]: rule_set for rule_set in self.rule_sets}
+        for client_only in ("Custom-Reject", "Custom-Tailscale", "Custom-Direct"):
+            self.assertEqual(by_name[client_only]["artifacts"], ["client"])
+        for shared in ("Custom-Priority", "Custom-Scholar", "Custom-AI", "Custom-Dev"):
+            self.assertEqual(
+                sorted(by_name[shared]["artifacts"]), ["client", "server"]
+            )
+
     def test_scholar_rules_precede_every_ai_rule(self):
         # Defensive ordering: mihomo is first-match, so the exact
-        # scholar.google.com rules must come before ANY Ai+ rule (let alone a
-        # hypothetical DOMAIN-SUFFIX,google.com) or they would be dead.
-        expanded = clash._expand_custom_rules(self.rule_sets)
+        # scholar.google.com rules must come before ANY Ai+ rule (let alone
+        # DOMAIN-SUFFIX,google.com) or they would be dead rules.
+        expanded = clash._expand_custom_rules(self.rule_sets, clash.ARTIFACT_CLIENT)
         scholar_indices = [
             index
             for index, rule in enumerate(expanded)
@@ -107,6 +145,24 @@ class RuleLoadingTests(unittest.TestCase):
         self.assertIsNotNone(first_ai)
         self.assertLess(max(scholar_indices), first_ai)
 
+    def test_google_is_one_suffix_rule(self):
+        ai_payload = {
+            rule
+            for rule_set in self.rule_sets
+            if rule_set["target"] == "Ai+"
+            for rule in rule_set["payload"]
+        }
+        self.assertIn("DOMAIN-SUFFIX,google.com", ai_payload)
+        # The old per-endpoint exact rules are covered by the suffix now.
+        for redundant in (
+            "DOMAIN,www.google.com",
+            "DOMAIN,accounts.google.com",
+            "DOMAIN,ogs.google.com",
+            "DOMAIN-SUFFIX,gemini.google.com",
+            "DOMAIN-SUFFIX,aistudio.google.com",
+        ):
+            self.assertNotIn(redundant, ai_payload)
+
     def test_confirmed_omissions_are_filled(self):
         payload = {
             rule for rule_set in self.rule_sets for rule in rule_set["payload"]
@@ -116,13 +172,17 @@ class RuleLoadingTests(unittest.TestCase):
             "DOMAIN-SUFFIX,oup.com",
             "DOMAIN-SUFFIX,sciencedirectassets.com",
             "DOMAIN-SUFFIX,els-cdn.com",
-            "DOMAIN-SUFFIX,githubcopilot.com",
             "DOMAIN-SUFFIX,hf.co",
             "DOMAIN-SUFFIX,claude.ai",
             "DOMAIN-SUFFIX,claude.com",
             "DOMAIN-SUFFIX,anthropic.com",
             "DOMAIN-SUFFIX,claudeusercontent.com",
             "DOMAIN-SUFFIX,x.ai",
+            "DOMAIN-SUFFIX,openai.fm",
+            "DOMAIN-SUFFIX,sora.com",
+            "DOMAIN-SUFFIX,perplexity.ai",
+            "DOMAIN-SUFFIX,poe.com",
+            "DOMAIN-SUFFIX,ggpht.com",
             "DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com",
         }
         self.assertTrue(expected.issubset(payload))
@@ -136,90 +196,62 @@ class RuleLoadingTests(unittest.TestCase):
             "DOMAIN-SUFFIX,intercom.io",
             "DOMAIN-SUFFIX,roboflow.com",
             "DOMAIN-SUFFIX,generativelanguage.googleapis.com",
+            "DOMAIN-SUFFIX,production.cloudflare.docker.com",
+            "DOMAIN-SUFFIX,registry-1.docker.io",
         ]:
             self.assertNotIn(gone, payload)
 
-    def test_copilot_is_direct_not_ai(self):
-        by_target = {
-            rule_set["target"]: rule_set["payload"] for rule_set in self.rule_sets
-        }
-        self.assertIn("DOMAIN-SUFFIX,githubcopilot.com", by_target["DIRECT"])
-        self.assertNotIn("DOMAIN-SUFFIX,githubcopilot.com", by_target["Ai+"])
-
-    def test_legacy_overbroad_rules_are_gone(self):
-        payload = {
+    def test_development_traffic_lives_in_dev_rule_set(self):
+        by_name = {rule_set["name"]: rule_set for rule_set in self.rule_sets}
+        dev = by_name["Custom-Dev"]
+        self.assertEqual(dev["target"], "Ai+")
+        self.assertEqual(dev["server-target"], "Dev+")
+        for rule in [
+            "DOMAIN-SUFFIX,github.com",
+            "DOMAIN-SUFFIX,githubcopilot.com",
+            "DOMAIN-SUFFIX,github.io",
+            "DOMAIN-SUFFIX,sourcegraph.com",
+            "DOMAIN-SUFFIX,huggingface.co",
+            "DOMAIN-SUFFIX,docker.io",
+            "DOMAIN-SUFFIX,cursor.sh",
+        ]:
+            self.assertIn(rule, dev["payload"])
+        # No longer scattered across other rule-sets.
+        everywhere = {
             rule for rule_set in self.rule_sets for rule in rule_set["payload"]
         }
-        self.assertNotIn("DOMAIN-KEYWORD,google", payload)
-        self.assertFalse(any(rule.startswith("IP-CIDR,216.239.0.0/16") for rule in payload))
-        self.assertNotIn("DOMAIN-SUFFIX,example.com", payload)
-        self.assertNotIn("DOMAIN-SUFFIX,oxfordjournals.org", payload)
-
-    def test_scholar_uses_narrow_exact_domains(self):
-        scholar = next(
-            rule_set for rule_set in self.rule_sets if rule_set["name"] == "Custom-Scholar"
-        )
-        self.assertEqual(scholar["target"], "学术搜索")
         self.assertEqual(
-            scholar["payload"],
-            ["DOMAIN,scholar.google.com", "DOMAIN,scholar.google.com.hk"],
+            [rule for rule in everywhere if rule == "DOMAIN-SUFFIX,github.com"],
+            ["DOMAIN-SUFFIX,github.com"],
         )
 
-    def test_gemini_shared_session_endpoints_keep_one_ai_exit(self):
-        ai_payload = {
-            rule
-            for rule_set in self.rule_sets
-            if rule_set["target"] == "Ai+"
-            for rule in rule_set["payload"]
-        }
-        self.assertTrue(
-            {
-                "DOMAIN-SUFFIX,gemini.google.com",
-                "DOMAIN,google.com",
-                "DOMAIN,www.google.com",
-                "DOMAIN,accounts.google.com",
-                "DOMAIN,apis.google.com",
-                "DOMAIN,ogs.google.com",
-            }.issubset(ai_payload)
+    def test_priority_direct_rules_come_first(self):
+        expanded = clash._expand_custom_rules(self.rule_sets, clash.ARTIFACT_SERVER)
+        self.assertEqual(
+            expanded[:2],
+            [
+                "DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com,DIRECT",
+                "DOMAIN-SUFFIX,ncbi.nlm.nih.gov,DIRECT",
+            ],
         )
-        self.assertNotIn("DOMAIN-SUFFIX,google.com", ai_payload)
+        # ncbi moved from Ai+ to DIRECT.
+        self.assertNotIn("DOMAIN-SUFFIX,ncbi.nlm.nih.gov,Ai+", expanded)
 
-    def test_academic_sites_use_direct_first_switchable_route(self):
-        by_target = {
-            target: {
-                rule
-                for rule_set in self.rule_sets
-                if rule_set["target"] == target
-                for rule in rule_set["payload"]
-            }
-            for target in {rule_set["target"] for rule_set in self.rule_sets}
-        }
-        switchable = {
-            "DOMAIN-SUFFIX,science.org",
-            "DOMAIN-SUFFIX,pnas.org",
-            "DOMAIN-SUFFIX,oup.com",
-            "DOMAIN-SUFFIX,tandfonline.com",
-            "DOMAIN-SUFFIX,cell.com",
-        }
-        self.assertTrue(switchable.issubset(by_target["学术访问"]))
-        self.assertTrue(switchable.isdisjoint(by_target["Ai+"]))
-        self.assertIn("DOMAIN-SUFFIX,challenges.cloudflare.com", by_target["Ai+"])
-
-    def test_chatgpt_core_is_owned_by_custom_ai_rules(self):
-        ai_payload = {
-            rule
-            for rule_set in self.rule_sets
-            if rule_set["target"] == "Ai+"
-            for rule in rule_set["payload"]
-        }
-        self.assertTrue(
-            {
-                "DOMAIN-SUFFIX,chatgpt.com",
-                "DOMAIN-SUFFIX,openai.com",
-                "DOMAIN-SUFFIX,oaistatic.com",
-                "DOMAIN-SUFFIX,oaiusercontent.com",
-            }.issubset(ai_payload)
-        )
+    def test_artifacts_expand_to_their_own_targets(self):
+        client = clash._expand_custom_rules(self.rule_sets, clash.ARTIFACT_CLIENT)
+        server = clash._expand_custom_rules(self.rule_sets, clash.ARTIFACT_SERVER)
+        self.assertIn("DOMAIN-SUFFIX,github.com,Ai+", client)
+        self.assertIn("DOMAIN-SUFFIX,github.com,Dev+", server)
+        self.assertNotIn("DOMAIN-SUFFIX,github.com,Dev+", client)
+        self.assertNotIn("DOMAIN-SUFFIX,githubcopilot.com,DIRECT", client)
+        # Desktop-only rule-sets never reach the server artifact.
+        for rule in ("DOMAIN-SUFFIX,adobedtm.com", "DOMAIN-SUFFIX,bing.com"):
+            self.assertIn(f"{rule},DIRECT", client)
+            self.assertNotIn(f"{rule},DIRECT", server)
+        self.assertIn("DOMAIN-SUFFIX,doubleclick.net,REJECT", client)
+        self.assertNotIn("DOMAIN-SUFFIX,doubleclick.net,REJECT", server)
+        self.assertIn("DOMAIN-SUFFIX,tailscale.io,DIRECT", client)
+        self.assertNotIn("DOMAIN-SUFFIX,tailscale.io,DIRECT", server)
 
     def test_route_constraint_rejects_cross_exit_regression(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -243,19 +275,80 @@ class RuleLoadingTests(unittest.TestCase):
             with self.assertRaisesRegex(clash.ConfigError, "requires.*Ai.*found 学术访问"):
                 clash.load_rule_sets(index)
 
+    def test_invalid_artifact_and_server_target_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "site.yaml").write_text(
+                "payload:\n  - DOMAIN-SUFFIX,science.org\n", encoding="utf-8"
+            )
+            index = root / "index.yml"
+            index.write_text(
+                "rule-sets:\n"
+                "  - name: Custom-Site\n"
+                "    file: site.yaml\n"
+                "    target: Ai+\n"
+                "    artifacts: [desktop]\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(clash.ConfigError, "artifacts"):
+                clash.load_rule_sets(index)
+
+
+class NodeFilterTests(unittest.TestCase):
+    def test_include_matches_us_naming_styles(self):
+        pattern = re.compile(clash.AI_INCLUDE_FILTER)
+        for name in US_NODES + NANO_US_NODES + [
+            "USA-Los Angeles-02",
+            "United States 03",
+            "美國-傳統命名",
+            "🇺🇸 美国优化-香港专线",
+        ]:
+            self.assertRegex(name, pattern)
+        for name in NANO_OTHER_NODES + [
+            "🇩🇪 德国-01",
+            "🇯🇵 日本-01",
+            "🇸🇬 新加坡-01",
+            "Russia-Moscow-01",
+            "Australia-Sydney-01",
+        ]:
+            self.assertNotRegex(name, pattern)
+
+    def test_dev_include_adds_hong_kong(self):
+        dev = re.compile(clash.DEV_INCLUDE_FILTER)
+        for name in ["🇭🇰 香港碳仔雞 | IPv4", "香港 01", "HK-02", "US-01", "🇺🇸 美国龙虾卷"]:
+            self.assertRegex(name, dev)
+        for name in ["🇯🇵 日本天妇罗", "Russia-Moscow-01", "剩余流量: 876.18 GB"]:
+            self.assertNotRegex(name, dev)
+
+    def test_exclude_strips_airport_info_lines(self):
+        pattern = re.compile(clash.AI_EXCLUDE_FILTER)
+        for name in [
+            "Expire: 2027-08-18",
+            "Traffic: 316.97GB | 1.66TB",
+            "Sync: 2026-10-15 20:42:00",
+            "🇺🇳 官网 helloshudong.com|v202605",
+            "剩余流量: 876.18 GB",
+            "距离下次重置剩余：24 天",
+            "套餐到期：2027-10-08",
+            "官网 小黑子.xyz 群组 t.me/nekoport",
+        ]:
+            self.assertRegex(name, pattern)
+        # Region filtering is AI_INCLUDE's job; real nodes stay.
+        for name in US_NODES + NANO_US_NODES + NANO_OTHER_NODES:
+            self.assertNotRegex(name, pattern)
+
 
 class MergeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.rule_sets = clash.load_rule_sets()
 
-    def test_groups_priorities_and_provider_path_fix(self):
+    def test_inline_groups_and_provider_path_fix(self):
         original = sample_config()
         original_auto = copy.deepcopy(clash._group_by_name(original, "自动选择"))
         merged = clash.apply_customizations(original, self.rule_sets)
 
-        auto = clash._group_by_name(merged, "自动选择")
-        self.assertEqual(auto, original_auto)
+        self.assertEqual(clash._group_by_name(merged, "自动选择"), original_auto)
 
         ai_stable = clash._group_by_name(merged, "Ai稳定选择")
         self.assertEqual(ai_stable["proxies"], US_NODES)
@@ -264,13 +357,12 @@ class MergeTests(unittest.TestCase):
         self.assertEqual(ai_auto["proxies"], US_NODES)
         self.assertEqual(ai_auto["url"], clash.AI_PROBE_URL)
         self.assertEqual(ai_auto["expected-status"], 200)
-        self.assertNotIn("include-all-proxies", ai_auto)
-        self.assertNotIn("exclude-filter", ai_auto)
+        self.assertNotIn("use", ai_auto)
 
         ai = clash._group_by_name(merged, "Ai+")
+        self.assertEqual(ai["type"], "select")
         self.assertEqual(ai["proxies"], ["Ai稳定选择", "Ai测速备用"])
-        self.assertNotIn("include-all-proxies", ai)
-        self.assertNotIn("default-selected", ai)
+        self.assertNotIn("filter", ai)
 
         scholar = clash._group_by_name(merged, "学术搜索")
         self.assertEqual(scholar["proxies"], ["Ai稳定选择", "Ai测速备用"])
@@ -289,7 +381,7 @@ class MergeTests(unittest.TestCase):
 
     def test_custom_rules_precede_subscription_rules(self):
         merged = clash.apply_customizations(sample_config(), self.rule_sets)
-        expected = clash._expand_custom_rules(self.rule_sets)
+        expected = clash._expand_custom_rules(self.rule_sets, clash.ARTIFACT_CLIENT)
         self.assertEqual(merged["rules"][: len(expected)], expected)
         self.assertEqual(merged["rules"][-1], "MATCH,漏网之鱼")
         self.assertNotIn("DOMAIN-SUFFIX,science.org,DIRECT", merged["rules"])
@@ -305,14 +397,11 @@ class MergeTests(unittest.TestCase):
         twice = clash.apply_customizations(once, self.rule_sets)
         self.assertEqual(once, twice)
 
-    def test_provider_subscription_uses_runtime_filter_without_raising(self):
+    def test_provider_subscription_gets_the_same_group_shape(self):
         config = {
-            "proxy-providers": {
-                "sub": {"type": "http", "url": "https://example.test/sub"},
-            },
+            "proxy-providers": {"sub": {"type": "http", "url": "https://example.test/sub"}},
             "proxy-groups": [
-                {"name": "Ai+", "type": "select", "proxies": ["手动选择"]},
-                {"name": "手动选择", "type": "select", "proxies": ["自动选择"]},
+                {"name": "Ai+", "type": "url-test", "proxies": []},
                 {"name": "漏网之鱼", "type": "select", "proxies": ["手动选择", "DIRECT"]},
             ],
             "rule-providers": {},
@@ -320,58 +409,60 @@ class MergeTests(unittest.TestCase):
         }
         merged = clash.apply_customizations(config, self.rule_sets)
 
-        ai = clash._group_by_name(merged, "Ai+")
-        self.assertEqual(ai["use"], ["sub"])
-        self.assertEqual(ai["filter"], clash.AI_INCLUDE_FILTER)
-        self.assertEqual(ai["exclude-filter"], clash.AI_EXCLUDE_FILTER)
+        stable = clash._group_by_name(merged, "Ai稳定选择")
+        auto = clash._group_by_name(merged, "Ai测速备用")
+        for group in (stable, auto):
+            self.assertEqual(group["use"], ["sub"])
+            self.assertEqual(group["filter"], clash.AI_INCLUDE_FILTER)
+            self.assertEqual(group["exclude-filter"], clash.AI_EXCLUDE_FILTER)
+            self.assertNotIn("proxies", group)
+        self.assertEqual(auto["url"], clash.AI_PROBE_URL)
+        self.assertEqual(
+            clash._group_by_name(merged, "Ai+")["proxies"],
+            ["Ai稳定选择", "Ai测速备用"],
+        )
+        self.assertEqual(
+            clash._group_by_name(merged, "学术搜索")["proxies"],
+            ["Ai稳定选择", "Ai测速备用"],
+        )
+        # A url-test Ai+ from the subscription is coerced to select.
+        self.assertEqual(clash._group_by_name(merged, "Ai+")["type"], "select")
+
+    def test_missing_ai_group_is_created(self):
+        merged = clash.apply_customizations(nanoport_config(), self.rule_sets)
+
+        names = [group["name"] for group in merged["proxy-groups"]]
+        self.assertIn("Ai+", names)
+        self.assertLess(names.index("Ai+"), names.index("漏网之鱼"))
+        self.assertEqual(
+            clash._group_by_name(merged, "Ai稳定选择")["proxies"], NANO_US_NODES
+        )
+        for name in NANO_OTHER_NODES + NANO_INFO_NODES:
+            self.assertNotIn(name, clash._group_by_name(merged, "Ai稳定选择")["proxies"])
+        # Untouched groups of the new airport survive.
+        self.assertTrue(clash._group_by_name(merged, "战略转移"))
+        self.assertIn("DOMAIN-SUFFIX,bilibili.com,DIRECT", merged["rules"])
+
+    def test_rules_for_absent_targets_are_skipped(self):
+        config = {
+            "proxies": [{"name": "🇯🇵 日本-01", "type": "ss", "server": "jp", "port": 443}],
+            "proxy-groups": [
+                {"name": "自动选择", "type": "url-test", "proxies": ["🇯🇵 日本-01"]},
+                {"name": "漏网之鱼", "type": "select", "proxies": ["自动选择", "DIRECT"]},
+            ],
+            "rule-providers": {},
+            "rules": ["MATCH,漏网之鱼"],
+        }
+        # No US node and no provider: no AI groups, and no rule may point at a
+        # target this config does not define.
+        merged = clash.apply_customizations(config, self.rule_sets)
+
+        self.assertIsNone(clash._group_by_name(merged, "Ai+"))
         self.assertIsNone(clash._group_by_name(merged, "Ai稳定选择"))
-        self.assertIsNone(clash._group_by_name(merged, "Ai测速备用"))
-        self.assertEqual(
-            clash._group_by_name(merged, "学术搜索")["proxies"], ["Ai+"]
-        )
-        self.assertEqual(
-            clash._group_by_name(merged, "学术访问")["proxies"], ["DIRECT", "Ai+"]
-        )
-        expected = clash._expand_custom_rules(self.rule_sets)
-        self.assertEqual(merged["rules"][: len(expected)], expected)
-
-    def test_ai_filter_matches_us_whitelist_and_info_lines(self):
-        include = re.compile(clash.AI_INCLUDE_FILTER)
-        for name in [
-            "🇺🇸 美国-01",
-            "🇺🇸 美国-BGP-05【优化】",
-            "🇺🇸 Basic-美国-BGP-01|v202605",
-            "US-01",
-            "USA-Los Angeles-02",
-            "United States 03",
-            "美國-傳統命名",
-            # Whitelist wins over region words in the same name.
-            "🇺🇸 美国优化-香港专线",
-        ]:
-            self.assertRegex(name, include)
-        for name in [
-            "🇩🇪 德国-01",
-            "🇯🇵 日本-01",
-            "🇸🇬 新加坡-01",
-            "🇫🇮 芬兰-01",
-            "Russia-Moscow-01",
-            "Australia-Sydney-01",
-        ]:
-            self.assertNotRegex(name, include)
-
-        exclude = re.compile(clash.AI_EXCLUDE_FILTER)
-        for name in [
-            "Expire: 2027-08-18",
-            "Traffic: 316.97GB | 1.66TB",
-            "Sync: 2026-10-15 20:42:00",
-            "🇺🇳 官网 helloshudong.com|v202605",
-            "剩余流量：1 TB",
-            "套餐提示",
-        ]:
-            self.assertRegex(name, exclude)
-        # Region filtering is AI_INCLUDE's job; AI_EXCLUDE must not touch it.
-        for name in ["🇺🇸 美国-01", "US-01", "🇭🇰 香港-01", "🇩🇪 德国-01"]:
-            self.assertNotRegex(name, exclude)
+        targets = {rule.split(",")[2] for rule in merged["rules"] if len(rule.split(",")) > 2}
+        self.assertTrue(targets <= {"DIRECT", "REJECT"})
+        self.assertIn("DOMAIN-SUFFIX,tailscale.io,DIRECT", merged["rules"])
+        self.assertEqual(merged["rules"][-1], "MATCH,漏网之鱼")
 
 
 class ScriptGenerationTests(unittest.TestCase):
@@ -383,10 +474,12 @@ class ScriptGenerationTests(unittest.TestCase):
         script = clash.render_override_script(self.rule_sets)
         self.assertIn("function main(config)", script)
         self.assertIn('"DOMAIN,scholar.google.com,学术搜索"', script)
-        self.assertIn('"DOMAIN,google.com,Ai+"', script)
-        self.assertIn('"DOMAIN,accounts.google.com,Ai+"', script)
-        self.assertNotIn('"DOMAIN-SUFFIX,google.com,Ai+"', script)
+        self.assertIn('"DOMAIN-SUFFIX,google.com,Ai+"', script)
+        self.assertIn('"DOMAIN-SUFFIX,claude.ai,Ai+"', script)
+        self.assertIn('"DOMAIN-SUFFIX,github.com,Ai+"', script)
         self.assertIn('"DOMAIN-SUFFIX,science.org,学术访问"', script)
+        self.assertIn('"DOMAIN-SUFFIX,adobedtm.com,DIRECT"', script)
+        self.assertNotIn('"DOMAIN,www.google.com,Ai+"', script)
         self.assertNotIn("__CUSTOM_RULES_JSON__", script)
         self.assertNotIn("proxy-providers:", script)
 
@@ -396,29 +489,60 @@ class ScriptGenerationTests(unittest.TestCase):
             clash.write_text_atomic(target, "const group = '学术搜索';\n")
             self.assertEqual(target.read_text(encoding="utf-8"), "const group = '学术搜索';\n")
 
-    def test_server_policy_is_secret_free_and_direct_by_default(self):
-        policy = clash.build_server_policy(self.rule_sets)
-        groups = {group["name"]: group for group in policy["proxy-groups"]}
 
-        self.assertEqual(groups["Ai+"]["type"], "url-test")
-        self.assertEqual(groups["Ai+"]["use"], ["subscription"])
-        self.assertEqual(groups["Ai+"]["filter"], clash.AI_INCLUDE_FILTER)
-        self.assertEqual(groups["Ai+"]["exclude-filter"], clash.AI_EXCLUDE_FILTER)
-        self.assertEqual(groups["Ai+"]["url"], clash.AI_PROBE_URL)
+class ServerPolicyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.rule_sets = clash.load_rule_sets()
+        cls.policy = clash.build_server_policy(cls.rule_sets)
+
+    def groups(self):
+        return {group["name"]: group for group in self.policy["proxy-groups"]}
+
+    def test_server_mirrors_the_desktop_ai_shape(self):
+        groups = self.groups()
+        self.assertEqual(
+            sorted(groups),
+            sorted(["PROXY", "Ai稳定选择", "Ai测速备用", "Ai+", "Dev+", "学术搜索", "学术访问"]),
+        )
+        for name in ("Ai稳定选择", "Ai测速备用", "Dev+"):
+            self.assertEqual(groups[name]["use"], ["subscription"])
+            self.assertEqual(groups[name]["exclude-filter"], clash.AI_EXCLUDE_FILTER)
+        self.assertEqual(groups["Ai稳定选择"]["type"], "select")
+        self.assertEqual(groups["Ai稳定选择"]["filter"], clash.AI_INCLUDE_FILTER)
+        self.assertEqual(groups["Ai测速备用"]["type"], "url-test")
+        self.assertEqual(groups["Ai测速备用"]["url"], clash.AI_PROBE_URL)
+        self.assertEqual(groups["Ai测速备用"]["expected-status"], 200)
+        self.assertEqual(groups["Ai+"]["proxies"], ["Ai稳定选择", "Ai测速备用"])
         self.assertEqual(groups["学术搜索"]["proxies"], ["Ai+", "DIRECT"])
         self.assertEqual(groups["学术访问"]["proxies"], ["DIRECT", "Ai+"])
-        self.assertEqual(policy["rules"][-1], "MATCH,DIRECT")
-        self.assertIn(
-            "DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com,DIRECT",
-            policy["rules"],
-        )
 
+    def test_dev_group_accepts_us_and_hong_kong(self):
+        dev = self.groups()["Dev+"]
+        self.assertEqual(dev["filter"], clash.DEV_INCLUDE_FILTER)
+        self.assertEqual(dev["proxies"], ["PROXY"])
+        self.assertEqual(self.groups()["PROXY"]["url"], clash.GENERIC_PROBE_URL)
+
+    def test_server_rules_only_use_server_targets(self):
+        rules = self.policy["rules"]
+        self.assertEqual(rules[-1], "MATCH,DIRECT")
+        self.assertIn(
+            "DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com,DIRECT", rules
+        )
+        self.assertIn("DOMAIN-SUFFIX,ncbi.nlm.nih.gov,DIRECT", rules)
+        self.assertIn("DOMAIN-SUFFIX,github.com,Dev+", rules)
+        self.assertIn("DOMAIN-SUFFIX,claude.ai,Ai+", rules)
+        # Desktop-only rule-sets are trimmed away.
+        for gone in ("adobedtm.com", "bing.com", "doubleclick.net", "tailscale.io"):
+            self.assertFalse(any(gone in rule for rule in rules), gone)
+
+    def test_rendered_policy_is_secret_free_and_anchor_free(self):
         rendered = clash.render_server_policy(self.rule_sets)
         self.assertNotIn("proxy-providers:", rendered)
-        self.assertNotRegex(
-            rendered,
-            r"(?i)(subscription[_-]?url|password|secret|token):",
-        )
+        self.assertNotRegex(rendered, r"(?i)(subscription[_-]?url|password|secret|token):")
+        # Reused dicts must not leak YAML anchors into a hand-edited file.
+        self.assertNotIn("&id0", rendered)
+        self.assertNotIn("*id0", rendered)
 
 
 if __name__ == "__main__":

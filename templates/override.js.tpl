@@ -30,12 +30,14 @@ const AI_PROBE_URL_BACKUP = "https://www.gstatic.com/generate_204";
 // The bounded us/usa tokens keep names like "Russia" or "Australia" from
 // matching accidentally.
 const AI_INCLUDE_SOURCE = "(?:🇺🇸|美国|美國|united[ -]?states|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))";
-
-// AI_EXCLUDE only strips informational nodes injected by airports
-// (Expire/Traffic/Sync/官网/套餐/剩余流量...). Region filtering is
-// AI_INCLUDE's job; a US-named node stays even if its name also contains
-// region words such as 香港.
-const AI_EXCLUDE_SOURCE = "(?:🇺🇳|剩余流量|流量剩余|到期时间|过期时间|重置时间|套餐提示|订阅信息|(?:^|[\\s|_-])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\\s:：|_-]|$))";
+// AI_EXCLUDE only strips informational nodes injected by airports. Region
+// filtering is AI_INCLUDE's job; a US-named node stays even if its name also
+// contains region words such as 香港. Observed variants across airports:
+//   剩余流量: 876.18 GB
+//   距离下次重置剩余：24 天
+//   套餐到期：2027-10-08
+//   官网 xxx.xyz 群组 t.me/...
+const AI_EXCLUDE_SOURCE = "(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\\s|_-])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\\s:：|_-]|$))";
 
 const AI_INCLUDE = new RegExp(AI_INCLUDE_SOURCE, "i");
 const AI_EXCLUDE = new RegExp(AI_EXCLUDE_SOURCE, "i");
@@ -120,16 +122,18 @@ function insertGroupsBeforeAi(config, groups) {
   config["proxy-groups"].splice(aiIndex, 0, ...groups);
 }
 
-function configureInlineGroups(config, ai, nodes) {
+// Build the AI/Scholar/Academic group set. Inline subscriptions get an
+// explicit node list; proxy-providers subscriptions get use+filter and the
+// core resolves the same nodes at runtime. Both produce an identical group
+// shape, so switching airports changes only the node source, not the policy.
+function configureAiGroups(config, ai, source) {
   const aiStable = {
     name: AI_STABLE_GROUP,
     type: "select",
-    proxies: [...nodes],
   };
   const aiAuto = {
     name: AI_AUTO_GROUP,
     type: "url-test",
-    proxies: [...nodes],
     url: AI_PROBE_URL,
     interval: 300,
     tolerance: 50,
@@ -138,6 +142,20 @@ function configureInlineGroups(config, ai, nodes) {
     "max-failed-times": 2,
     "expected-status": 200,
   };
+  if (source.nodes) {
+    aiStable.proxies = [...source.nodes];
+    aiAuto.proxies = [...source.nodes];
+  } else {
+    // provider mode: mihomo fills these in from the provider at runtime and
+    // the user can still pick a node manually in Ai稳定选择.
+    const includeFilter = coreFilter(AI_INCLUDE_SOURCE);
+    const excludeFilter = coreFilter(AI_EXCLUDE_SOURCE);
+    for (const group of [aiStable, aiAuto]) {
+      group.use = [...source.providers];
+      group.filter = includeFilter;
+      group["exclude-filter"] = excludeFilter;
+    }
+  }
   const scholar = {
     name: SCHOLAR_GROUP,
     type: "select",
@@ -150,8 +168,11 @@ function configureInlineGroups(config, ai, nodes) {
   };
   insertGroupsBeforeAi(config, [aiStable, aiAuto, scholar, academic]);
 
-  // Explicit node lists avoid runtime compatibility problems in FlClash
+  // Explicit member lists avoid runtime compatibility problems in FlClash
   // versions that display newer dynamic fields but do not preserve them.
+  // Coerce the type too: a new airport may ship Ai+ as url-test, and a
+  // url-test group cannot hold other groups as members.
+  ai.type = "select";
   ai.proxies = [AI_STABLE_GROUP, AI_AUTO_GROUP];
   for (const key of [
     "include-all",
@@ -165,65 +186,58 @@ function configureInlineGroups(config, ai, nodes) {
   ]) delete ai[key];
 }
 
-function configureProviderGroups(config, ai, providers) {
-  // proxy-providers subscription: node names cannot be enumerated at script
-  // time, so Ai稳定选择/Ai测速备用 are NOT rebuilt. Instead Ai+ keeps its own
-  // group and gets use+filter; the core resolves US nodes from the provider
-  // at runtime.
-  const scholar = {
-    name: SCHOLAR_GROUP,
-    type: "select",
-    proxies: [AI_GROUP],
-  };
-  const academic = {
-    name: ACADEMIC_GROUP,
-    type: "select",
-    proxies: ["DIRECT", AI_GROUP],
-  };
-  insertGroupsBeforeAi(config, [scholar, academic]);
-
-  ai.use = [...providers];
-  ai.filter = coreFilter(AI_INCLUDE_SOURCE);
-  ai["exclude-filter"] = coreFilter(AI_EXCLUDE_SOURCE);
-  for (const key of [
-    "include-all",
-    "include-all-proxies",
-    "include-all-providers",
-    "exclude-type",
-    "default-selected",
-    "empty-fallback",
-  ]) delete ai[key];
-}
-
-// Returns the applied mode: "inline", "provider", or "degraded". Degrading
-// (missing Ai+ / 漏网之鱼 / proxy-groups) records a warning and keeps going so
-// rules are still applied; only a total lack of usable nodes throws.
+// Returns the applied mode:
+//   "inline"  - US nodes enumerated from config.proxies
+//   "provider"- nodes resolved at runtime from proxy-providers
+//   "no-nodes"- no usable node source; no groups are built
+//   "degraded"- the subscription has no proxy-groups array at all
+// Everything degrades instead of throwing: rule injection never points at a
+// policy target this subscription does not have (see configureRules), and a
+// missing Ai+ group is created, so a different airport keeps working.
 function configureGroups(config, warnings) {
   if (!Array.isArray(config["proxy-groups"])) {
     warnings.push("subscription has no proxy-groups array; group configuration skipped, rules still applied");
     return "degraded";
   }
 
-  const ai = groupByName(config, AI_GROUP);
-  if (!ai) {
-    warnings.push(`subscription is missing ${AI_GROUP}; group configuration skipped, rules still applied`);
-    return "degraded";
-  }
-
   const nodes = eligibleAiNodes(config);
   const providers = providerNames(config);
   let mode;
+  let source;
   if (nodes.length) {
     mode = "inline";
+    source = { nodes };
   } else if (providers.length) {
     mode = "provider";
+    source = { providers };
   } else {
-    throw new Error("subscription exposes neither usable inline proxies nor proxy-providers for AI nodes");
+    // No US-named node and no provider to resolve at runtime. Do not throw and
+    // do not create groups: rules whose target does not exist are skipped, so
+    // the direct/tailscale/ad-block parts still apply and the marker explains
+    // what was dropped.
+    warnings.push(
+      "no usable AI node source (no US-named node and no proxy-providers); " +
+      "AI, Scholar and Academic groups skipped",
+    );
+    return "no-nodes";
+  }
+
+  let ai = groupByName(config, AI_GROUP);
+  if (!ai) {
+    // A different airport may not ship an Ai+ group at all. Create it so the
+    // AI/Scholar/Academic rules stay valid instead of being dropped. It is
+    // placed before 漏网之鱼 when that group exists, otherwise at the end.
+    ai = { name: AI_GROUP, type: "select", proxies: [] };
+    const groups = config["proxy-groups"];
+    const fallbackIndex = groups.findIndex(
+      (group) => group && group.name === FALLBACK_GROUP,
+    );
+    groups.splice(fallbackIndex === -1 ? groups.length : fallbackIndex, 0, ai);
+    warnings.push(`subscription had no ${AI_GROUP} group; created it`);
   }
 
   removeGeneratedGroups(config);
-  if (mode === "inline") configureInlineGroups(config, ai, nodes);
-  else configureProviderGroups(config, ai, providers);
+  configureAiGroups(config, ai, source);
 
   const fallback = groupByName(config, FALLBACK_GROUP);
   if (fallback) {
@@ -237,9 +251,53 @@ function configureGroups(config, warnings) {
   return mode;
 }
 
-function configureRules(config) {
+function ruleTarget(rule) {
+  if (typeof rule !== "string") return null;
+  const parts = rule.split(",").map((part) => part.trim());
+  if (parts[0] === "MATCH") return parts[1] || null;
+  if (parts.length < 3) return null;
+  return parts[2];
+}
+
+// Prepend the custom rules, skipping any whose policy target this
+// subscription does not provide. A subscription from a different airport may
+// lack Ai+ or 学术访问 entirely; injecting such a rule would make mihomo
+// refuse the whole config, which is far worse than skipping that rule-set.
+// Returns the rules that were actually injected.
+function configureRules(config, warnings) {
   if (!Array.isArray(config.rules)) config.rules = [];
-  const custom = new Set(CUSTOM_RULES);
+
+  const groupNames = new Set(
+    (Array.isArray(config["proxy-groups"]) ? config["proxy-groups"] : [])
+      .map((group) => group && group.name)
+      .filter(Boolean),
+  );
+  const proxyNames = new Set(
+    (Array.isArray(config.proxies) ? config.proxies : [])
+      .map((proxy) => proxy && proxy.name)
+      .filter(Boolean),
+  );
+  const builtinTargets = new Set(["DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE"]);
+  const allowed = (target) =>
+    builtinTargets.has(target) || groupNames.has(target) || proxyNames.has(target);
+
+  const retained = [];
+  const skipped = new Set();
+  for (const rule of CUSTOM_RULES) {
+    const target = ruleTarget(rule);
+    if (target && !allowed(target)) {
+      skipped.add(target);
+      continue;
+    }
+    retained.push(rule);
+  }
+  for (const target of skipped) {
+    warnings.push(
+      `subscription has no ${target} policy target; custom rules for it were skipped`,
+    );
+  }
+
+  const custom = new Set(retained);
   const customRuleKey = (rule) => {
     if (typeof rule !== "string") return null;
     const parts = rule.split(",").map((part) => part.trim());
@@ -264,7 +322,7 @@ function configureRules(config) {
     if (parts[parts.length - 1] === "no-resolve") key.push("no-resolve");
     return key.join(",");
   };
-  const customKeys = new Set(CUSTOM_RULES.map(customRuleKey));
+  const customKeys = new Set(retained.map(customRuleKey));
   const original = config.rules.filter(
     (rule) => typeof rule !== "string" || !(
       custom.has(rule) ||
@@ -272,58 +330,52 @@ function configureRules(config) {
       customKeys.has(customRuleKey(rule))
     ),
   );
-  config.rules = [...CUSTOM_RULES, ...original];
+  config.rules = [...retained, ...original];
+  return retained;
 }
 
 // Groups this run failed to produce are reported through warnings instead of
 // throwing, so a partial subscription never cancels the rule override.
-// In degraded mode no group was configured, so no group is validated either.
-function validateResult(config, mode, warnings) {
-  if (mode !== "degraded" && Array.isArray(config["proxy-groups"])) {
+// In degraded/no-nodes modes nothing was configured, so no group is validated.
+function validateResult(config, mode, retainedRules) {
+  if (mode === "inline" || mode === "provider") {
     const names = config["proxy-groups"].map((group) => group && group.name);
     if (names.some((name, index) => !name || names.indexOf(name) !== index)) {
       throw new Error("proxy group names must be present and unique");
     }
 
+    for (const required of [
+      AI_STABLE_GROUP,
+      AI_AUTO_GROUP,
+      AI_GROUP,
+      SCHOLAR_GROUP,
+      ACADEMIC_GROUP,
+    ]) {
+      if (!names.includes(required)) throw new Error(`generated group is missing: ${required}`);
+    }
+    const stable = groupByName(config, AI_STABLE_GROUP);
+    const auto = groupByName(config, AI_AUTO_GROUP);
     if (mode === "inline") {
-      for (const required of [
-        AI_STABLE_GROUP,
-        AI_AUTO_GROUP,
-        SCHOLAR_GROUP,
-        ACADEMIC_GROUP,
-      ]) {
-        if (!names.includes(required)) throw new Error(`generated group is missing: ${required}`);
-      }
-      if (!groupByName(config, AI_STABLE_GROUP).proxies.length ||
-          !groupByName(config, AI_AUTO_GROUP).proxies.length) {
+      if (!stable.proxies.length || !auto.proxies.length) {
         throw new Error("AI stable/backup group is empty");
       }
-      const expectedAiChoices = [AI_STABLE_GROUP, AI_AUTO_GROUP];
-      if (JSON.stringify(groupByName(config, AI_GROUP).proxies) !==
-          JSON.stringify(expectedAiChoices)) {
-        throw new Error("Ai+ does not prefer stable selection");
-      }
-      if (JSON.stringify(groupByName(config, SCHOLAR_GROUP).proxies) !==
-          JSON.stringify(expectedAiChoices)) {
-        throw new Error("academic search does not share the stable AI exit");
-      }
-      if (JSON.stringify(groupByName(config, ACADEMIC_GROUP).proxies) !==
-          JSON.stringify(["DIRECT", AI_GROUP])) {
-        throw new Error("academic access does not prefer DIRECT with Ai+ backup");
-      }
-    } else if (mode === "provider") {
-      const ai = groupByName(config, AI_GROUP);
-      if (!Array.isArray(ai.use) || !ai.use.length || typeof ai.filter !== "string") {
-        throw new Error("Ai+ provider filter is not configured");
-      }
-      if (JSON.stringify(groupByName(config, SCHOLAR_GROUP).proxies) !==
-          JSON.stringify([AI_GROUP])) {
-        throw new Error("academic search does not follow the provider-backed Ai+ exit");
-      }
-      if (JSON.stringify(groupByName(config, ACADEMIC_GROUP).proxies) !==
-          JSON.stringify(["DIRECT", AI_GROUP])) {
-        throw new Error("academic access does not prefer DIRECT with Ai+ backup");
-      }
+    } else if (!Array.isArray(stable.use) || !stable.use.length ||
+               !Array.isArray(auto.use) || !auto.use.length) {
+      throw new Error("AI stable/backup group does not resolve provider nodes");
+    }
+
+    const expectedAiChoices = [AI_STABLE_GROUP, AI_AUTO_GROUP];
+    if (JSON.stringify(groupByName(config, AI_GROUP).proxies) !==
+        JSON.stringify(expectedAiChoices)) {
+      throw new Error("Ai+ does not prefer stable selection");
+    }
+    if (JSON.stringify(groupByName(config, SCHOLAR_GROUP).proxies) !==
+        JSON.stringify(expectedAiChoices)) {
+      throw new Error("academic search does not share the stable AI exit");
+    }
+    if (JSON.stringify(groupByName(config, ACADEMIC_GROUP).proxies) !==
+        JSON.stringify(["DIRECT", AI_GROUP])) {
+      throw new Error("academic access does not prefer DIRECT with Ai+ backup");
     }
 
     const fallback = groupByName(config, FALLBACK_GROUP);
@@ -332,9 +384,31 @@ function validateResult(config, mode, warnings) {
     }
   }
 
-  if (config.rules.length < CUSTOM_RULES.length ||
-      !CUSTOM_RULES.every((rule, index) => config.rules[index] === rule)) {
+  // Injected rules must sit at the head in declared order ...
+  if (config.rules.length < retainedRules.length ||
+      !retainedRules.every((rule, index) => config.rules[index] === rule)) {
     throw new Error("custom rule priority is invalid");
+  }
+  // ... and must never reference a policy target this config does not define,
+  // otherwise mihomo refuses to load the whole subscription.
+  const available = new Set([
+    ...(Array.isArray(config["proxy-groups"]) ? config["proxy-groups"] : [])
+      .map((group) => group && group.name)
+      .filter(Boolean),
+    ...(Array.isArray(config.proxies) ? config.proxies : [])
+      .map((proxy) => proxy && proxy.name)
+      .filter(Boolean),
+    "DIRECT",
+    "REJECT",
+    "REJECT-DROP",
+    "PASS",
+    "COMPATIBLE",
+  ]);
+  for (const rule of retainedRules) {
+    const target = ruleTarget(rule);
+    if (target && !available.has(target)) {
+      throw new Error(`injected rule references unknown policy target ${target}: ${rule}`);
+    }
   }
 }
 
@@ -347,13 +421,19 @@ function main(config) {
     delete next.__flclashRules;
     fixProviderPaths(next);
     const mode = configureGroups(next, warnings);
-    configureRules(next);
-    validateResult(next, mode, warnings);
+    const retained = configureRules(next, warnings);
+    validateResult(next, mode, retained);
     // Visible application marker: check the subscription preview for
     // __flclashRules.applied to distinguish "override applied" (possibly
-    // degraded, see warnings) from "override crashed and returned the
-    // original config".
-    next.__flclashRules = { applied: true, version: SCRIPT_VERSION, mode, warnings };
+    // degraded - read warnings) from "override crashed and returned the
+    // original config". rules tells how many custom rules were injected.
+    next.__flclashRules = {
+      applied: true,
+      version: SCRIPT_VERSION,
+      mode,
+      rules: retained.length,
+      warnings,
+    };
     return next;
   } catch (error) {
     if (typeof console !== "undefined" && typeof console.error === "function") {

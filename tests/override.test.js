@@ -27,8 +27,7 @@ function loadMainWithoutConsole() {
   return context.__extensionMain;
 }
 
-// Both observed airport naming styles for US nodes, plus non-US regions and
-// the four informational node lines real subscriptions inject.
+// Airport #1 naming: emoji + 中文, plus bounded ascii.
 const US_NODES = [
   "🇺🇸 美国-01",
   "🇺🇸 美国-BGP-05【优化】",
@@ -86,73 +85,140 @@ function sampleConfig() {
   };
 }
 
+// Airport #2 (nanoPort-style): 狮城/天妇罗/碳仔雞 names, "| protocol" suffixes,
+// four different info lines, and no Ai+ group at all.
+const NANO_US_NODES = [
+  "🇺🇸 狮城沙嗲串 | IPv4",
+  "🇺🇸 美国龙虾卷 | DDNSv4",
+  "🇺🇸 美国奶油派 | CT IP",
+  "🇺🇸 美国汉堡包 | CT CU",
+  "🇺🇸 美国苹果派 | CM",
+];
+const NANO_OTHER_NODES = [
+  "🇸🇬 狮城肉骨茶 | IPv4",
+  "🇯🇵 日本天妇罗 | DDNSv4",
+  "🇭🇰 香港碳仔雞 | IPv4",
+];
+const NANO_INFO_NODES = [
+  "剩余流量: 876.18 GB",
+  "距离下次重置剩余：24 天",
+  "套餐到期：2027-10-08",
+  "官网 小黑子.xyz chicken.fufufu.sbs 群组 t.me/nekoport",
+];
+
+function nanoportConfig() {
+  const names = [...NANO_US_NODES, ...NANO_OTHER_NODES, ...NANO_INFO_NODES];
+  const proxies = names.map((name, index) => ({
+    name,
+    type: "vless",
+    server: `n${index}.example`,
+    port: 443,
+  }));
+  return {
+    proxies,
+    "proxy-groups": [
+      { name: "自动选择", type: "url-test", proxies: names },
+      { name: "战略转移", type: "url-test", proxies: names },
+      { name: "漏网之鱼", type: "select", proxies: ["自动选择", "DIRECT"] },
+    ],
+    "rule-providers": {},
+    rules: ["DOMAIN-SUFFIX,bilibili.com,DIRECT", "MATCH,漏网之鱼"],
+  };
+}
+
 function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-test("inline subscription builds US-whitelist groups and applies the marker", () => {
+function byName(result, name) {
+  return result["proxy-groups"].find((group) => group.name === name);
+}
+
+// Every injected rule must point at a target this config really defines,
+// otherwise mihomo refuses to load the whole subscription.
+function assertNoDanglingTargets(result) {
+  const available = new Set([
+    ...((result["proxy-groups"] || []).map((group) => group && group.name).filter(Boolean)),
+    ...((result.proxies || []).map((proxy) => proxy && proxy.name).filter(Boolean)),
+    "DIRECT",
+    "REJECT",
+    "REJECT-DROP",
+    "PASS",
+    "COMPATIBLE",
+  ]);
+  for (const rule of result.rules) {
+    if (rule.startsWith("RULE-SET,") || rule.startsWith("MATCH,")) continue;
+    const target = rule.split(",").map((part) => part.trim())[2];
+    assert.ok(
+      !target || available.has(target),
+      `dangling target ${target} in ${rule}`,
+    );
+  }
+}
+
+test("inline subscription builds the US-whitelist groups and a marker", () => {
   const { main, customRules } = loadMain();
   const config = sampleConfig();
-  const originalAuto = plain(config["proxy-groups"].find((group) => group.name === "自动选择"));
+  const originalAuto = plain(byName(config, "自动选择"));
   const result = main(config);
 
   assert.notStrictEqual(result, config);
-  const byName = (name) => result["proxy-groups"].find((group) => group.name === name);
-  assert.equal(byName("Ai自动选择"), undefined);
+  assert.equal(byName(result, "Ai自动选择"), undefined);
 
-  // AI_INCLUDE hits both US naming styles plus the bounded ASCII style;
-  // Germany/HK/TW/Russia/Australia and all four info lines are kept out.
-  assert.deepEqual(plain(byName("Ai稳定选择").proxies), US_NODES);
-  assert.deepEqual(plain(byName("Ai测速备用").proxies), US_NODES);
+  // AI_INCLUDE hits both naming styles plus bounded ascii; Germany/HK/TW/
+  // Russia/Australia and every info line stay out of the AI pool.
+  assert.deepEqual(plain(byName(result, "Ai稳定选择").proxies), US_NODES);
+  assert.deepEqual(plain(byName(result, "Ai测速备用").proxies), US_NODES);
   for (const name of INFO_NODES) {
-    assert.ok(!byName("Ai稳定选择").proxies.includes(name));
+    assert.ok(!byName(result, "Ai稳定选择").proxies.includes(name));
   }
-  assert.equal(byName("Ai测速备用").url, "https://chatgpt.com/cdn-cgi/trace");
-  assert.equal(byName("Ai测速备用")["expected-status"], 200);
-  assert.deepEqual(plain(byName("Ai+").proxies), ["Ai稳定选择", "Ai测速备用"]);
-  assert.deepEqual(plain(byName("学术搜索").proxies), ["Ai稳定选择", "Ai测速备用"]);
-  assert.deepEqual(plain(byName("学术访问").proxies), ["DIRECT", "Ai+"]);
-  assert.equal(byName("漏网之鱼").proxies[0], "DIRECT");
-  assert.deepEqual(plain(byName("自动选择")), originalAuto);
+  assert.equal(byName(result, "Ai测速备用").url, "https://chatgpt.com/cdn-cgi/trace");
+  assert.equal(byName(result, "Ai测速备用")["expected-status"], 200);
+  assert.deepEqual(plain(byName(result, "Ai+").proxies), ["Ai稳定选择", "Ai测速备用"]);
+  assert.deepEqual(plain(byName(result, "学术搜索").proxies), [
+    "Ai稳定选择",
+    "Ai测速备用",
+  ]);
+  assert.deepEqual(plain(byName(result, "学术访问").proxies), ["DIRECT", "Ai+"]);
+  assert.equal(byName(result, "漏网之鱼").proxies[0], "DIRECT");
+  assert.deepEqual(plain(byName(result, "自动选择")), originalAuto);
   assert.equal(result["rule-providers"].Apple.path, "./providers/rule/Apple.yaml");
 
-  // Claude fix: claude.ai and friends must be present.
+  // Claude fix.
   for (const domain of ["claude.ai", "claude.com", "anthropic.com", "claudeusercontent.com"]) {
     assert.ok(result.rules.includes(`DOMAIN-SUFFIX,${domain},Ai+`), domain);
   }
-  // Copilot moved to DIRECT; noise rules removed.
-  assert.ok(result.rules.includes("DOMAIN-SUFFIX,githubcopilot.com,DIRECT"));
-  for (const gone of [
-    "DOMAIN,default.exp-tas.com,Ai+",
-    "DOMAIN-SUFFIX,intercom.io,Ai+",
-    "DOMAIN-SUFFIX,roboflow.com,Ai+",
-    "DOMAIN-SUFFIX,generativelanguage.googleapis.com,Ai+",
-  ]) {
-    assert.ok(!result.rules.includes(gone), gone);
-  }
-  assert.ok(result.rules.includes("DOMAIN,scholar.google.com,学术搜索"));
-  assert.ok(result.rules.includes("DOMAIN,google.com,Ai+"));
+  // Google unification + dev traffic on the client.
+  assert.ok(result.rules.includes("DOMAIN-SUFFIX,google.com,Ai+"));
+  assert.ok(result.rules.includes("DOMAIN-SUFFIX,github.com,Ai+"));
+  assert.ok(result.rules.includes("DOMAIN-SUFFIX,githubcopilot.com,Ai+"));
+  assert.ok(result.rules.includes("DOMAIN-SUFFIX,huggingface.co,Ai+"));
+  // High-priority direct exceptions.
+  assert.ok(
+    result.rules.includes("DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com,DIRECT"),
+  );
+  assert.ok(result.rules.includes("DOMAIN-SUFFIX,ncbi.nlm.nih.gov,DIRECT"));
   assert.ok(result.rules.includes("DOMAIN-SUFFIX,science.org,学术访问"));
   assert.ok(!result.rules.includes("DOMAIN-SUFFIX,science.org,DIRECT"));
   assert.ok(!result.rules.includes("RULE-SET,Custom-Academic,DIRECT"));
+  assert.ok(result.rules.includes("DOMAIN-SUFFIX,adobedtm.com,DIRECT"));
   assert.equal(result.rules.at(-1), "MATCH,漏网之鱼");
 
-  // Custom rules keep their declared priority order at the head of the list,
-  // and subscription rules with the same match key are deduplicated.
+  // Priority order at the head of the list, and same-key subscription rules
+  // are deduplicated.
   assert.deepEqual(result.rules.slice(0, customRules.length), customRules);
   assert.equal(
     result.rules.indexOf("DOMAIN-SUFFIX,doubleclick.net,REJECT"),
     result.rules.lastIndexOf("DOMAIN-SUFFIX,doubleclick.net,REJECT"),
   );
+  assertNoDanglingTargets(result);
 
-  // Visible application marker for inline mode.
-  assert.deepEqual(plain(result.__flclashRules), {
-    applied: true,
-    version: result.__flclashRules.version,
-    mode: "inline",
-    warnings: [],
-  });
-  assert.match(result.__flclashRules.version, /^\d+\.\d+\.\d+$/);
+  const marker = plain(result.__flclashRules);
+  assert.equal(marker.applied, true);
+  assert.equal(marker.mode, "inline");
+  assert.equal(marker.rules, customRules.length);
+  assert.deepEqual(marker.warnings, []);
+  assert.match(marker.version, /^\d+\.\d+\.\d+$/);
 });
 
 test("extension is idempotent", () => {
@@ -162,14 +228,52 @@ test("extension is idempotent", () => {
   assert.deepEqual(plain(twice), plain(once));
 });
 
-test("proxy-providers subscription keeps Ai+ with a runtime filter", () => {
-  const { main, customRules } = loadMain();
+test("a different airport without Ai+ gets the group created", () => {
+  const errors = [];
+  const { main, customRules } = loadMain(errors);
+  const result = main(nanoportConfig());
+  assert.deepEqual(errors, []);
+
+  // Ai+ did not exist and was created, placed before 漏网之鱼.
+  const names = plain(result["proxy-groups"].map((group) => group.name));
+  assert.ok(names.includes("Ai+"));
+  assert.ok(names.indexOf("Ai+") < names.indexOf("漏网之鱼"));
+  assert.equal(byName(result, "Ai+").type, "select");
+  assert.deepEqual(plain(byName(result, "Ai+").proxies), [
+    "Ai稳定选择",
+    "Ai测速备用",
+  ]);
+
+  // US nodes of this naming style are found; SG/JP/HK and the four info lines
+  // (剩余流量 / 距离下次重置剩余 / 套餐到期 / 官网 …) are not.
+  assert.deepEqual(plain(byName(result, "Ai稳定选择").proxies), NANO_US_NODES);
+  for (const name of [...NANO_OTHER_NODES, ...NANO_INFO_NODES]) {
+    assert.ok(!byName(result, "Ai稳定选择").proxies.includes(name), name);
+  }
+
+  // Existing groups of the new airport are untouched.
+  assert.ok(byName(result, "自动选择"));
+  assert.ok(byName(result, "战略转移"));
+  assert.equal(byName(result, "漏网之鱼").proxies[0], "DIRECT");
+  assert.ok(result.rules.includes("DOMAIN-SUFFIX,bilibili.com,DIRECT"));
+
+  // All AI rules survive because Ai+ now exists.
+  assert.ok(result.rules.includes("DOMAIN-SUFFIX,claude.ai,Ai+"));
+  assert.ok(result.rules.includes("DOMAIN,scholar.google.com,学术搜索"));
+  assert.deepEqual(result.rules.slice(0, customRules.length), customRules);
+  assertNoDanglingTargets(result);
+
+  const marker = plain(result.__flclashRules);
+  assert.equal(marker.applied, true);
+  assert.ok(marker.warnings.some((warning) => warning.includes("Ai+")));
+});
+
+test("proxy-providers subscription resolves US nodes at runtime", () => {
   const config = {
     "proxy-providers": {
       sub: { type: "http", url: "https://example.test/sub", path: "./p.yaml" },
     },
     "proxy-groups": [
-      { name: "Ai自动选择", type: "url-test", use: ["sub"] },
       { name: "Ai+", type: "select", proxies: ["手动选择"] },
       { name: "手动选择", type: "select", proxies: ["自动选择"] },
       { name: "漏网之鱼", type: "select", proxies: ["手动选择", "DIRECT"] },
@@ -177,86 +281,130 @@ test("proxy-providers subscription keeps Ai+ with a runtime filter", () => {
     rules: ["MATCH,漏网之鱼"],
   };
   const errors = [];
+  const { main, customRules } = loadMain(errors);
   const result = main(config);
   assert.deepEqual(errors, []);
 
-  const byName = (name) => result["proxy-groups"].find((group) => group.name === name);
-  const ai = byName("Ai+");
-  assert.ok(ai, "Ai+ must survive on provider subscriptions");
-  assert.deepEqual(plain(ai.use), ["sub"]);
-  assert.equal(
-    ai.filter,
-    "(?i)(?:🇺🇸|美国|美國|united[ -]?states|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))",
-  );
-  assert.ok(ai["exclude-filter"].includes("expire"));
-  // Node groups are not rebuilt when nodes cannot be enumerated.
-  assert.equal(byName("Ai稳定选择"), undefined);
-  assert.equal(byName("Ai测速备用"), undefined);
-  assert.equal(byName("Ai自动选择"), undefined);
-  assert.deepEqual(plain(byName("学术搜索").proxies), ["Ai+"]);
-  assert.deepEqual(plain(byName("学术访问").proxies), ["DIRECT", "Ai+"]);
-  assert.equal(byName("漏网之鱼").proxies[0], "DIRECT");
+  const includeFilter =
+    "(?i)(?:🇺🇸|美国|美國|united[ -]?states|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))";
+  // Same three-group shape as inline mode, just resolved by the core.
+  const stable = byName(result, "Ai稳定选择");
+  const auto = byName(result, "Ai测速备用");
+  assert.deepEqual(plain(stable.use), ["sub"]);
+  assert.deepEqual(plain(auto.use), ["sub"]);
+  assert.equal(stable.filter, includeFilter);
+  assert.equal(auto.filter, includeFilter);
+  assert.ok(stable["exclude-filter"].includes("expire"));
+  assert.equal(auto.url, "https://chatgpt.com/cdn-cgi/trace");
+  assert.deepEqual(plain(byName(result, "Ai+").proxies), ["Ai稳定选择", "Ai测速备用"]);
+  assert.deepEqual(plain(byName(result, "学术搜索").proxies), [
+    "Ai稳定选择",
+    "Ai测速备用",
+  ]);
+  assert.deepEqual(plain(byName(result, "学术访问").proxies), ["DIRECT", "Ai+"]);
+  assert.equal(byName(result, "漏网之鱼").proxies[0], "DIRECT");
   assert.deepEqual(result.rules.slice(0, customRules.length), customRules);
-  assert.equal(result.rules.at(-1), "MATCH,漏网之鱼");
+  assertNoDanglingTargets(result);
   assert.equal(result.__flclashRules.mode, "provider");
-  assert.equal(result.__flclashRules.applied, true);
-  assert.deepEqual(plain(result.__flclashRules.warnings), []);
 });
 
-test("missing Ai+ group still overrides rules and leaves a visible marker", () => {
+test("no usable node source keeps the config loadable and skips AI rules", () => {
+  const { main } = loadMain();
+  const config = {
+    // A new airport with no US-named node and no provider to resolve.
+    proxies: [
+      { name: "🇯🇵 日本-01", type: "ss", server: "jp.example", port: 443 },
+      { name: "剩余流量: 10 GB", type: "ss", server: "info.example", port: 443 },
+    ],
+    "proxy-groups": [
+      { name: "自动选择", type: "url-test", proxies: ["🇯🇵 日本-01"] },
+      { name: "漏网之鱼", type: "select", proxies: ["自动选择", "DIRECT"] },
+    ],
+    "rule-providers": {},
+    rules: ["MATCH,漏网之鱼"],
+  };
   const errors = [];
-  const config = sampleConfig();
-  config["proxy-groups"] = config["proxy-groups"].filter((group) => group.name !== "Ai+");
-  const snapshot = plain(config);
   const result = loadMain(errors).main(config);
+  assert.deepEqual(errors, []);
 
-  // Degraded, not failed: rules are applied and the marker says so.
-  assert.notStrictEqual(result, config);
-  assert.equal(result.__flclashRules.applied, true);
-  assert.equal(result.__flclashRules.mode, "degraded");
-  assert.ok(result.__flclashRules.warnings.some((warning) => warning.includes("Ai+")));
+  // No AI groups were created and no Ai+-targeting rule was injected, so the
+  // subscription still loads.
+  assert.equal(byName(result, "Ai+"), undefined);
+  assert.equal(byName(result, "Ai稳定选择"), undefined);
+  assert.ok(!result.rules.some((rule) => rule.includes(",Ai+")));
+  assert.ok(!result.rules.some((rule) => rule.includes(",学术搜索")));
+  assert.ok(!result.rules.some((rule) => rule.includes(",学术访问")));
+  // Direct/ad-block/tailscale rules still apply.
   assert.equal(result.rules[0], "DOMAIN-SUFFIX,doubleclick.net,REJECT");
+  assert.ok(result.rules.includes("DOMAIN-SUFFIX,tailscale.io,DIRECT"));
+  assert.ok(result.rules.includes("DOMAIN-SUFFIX,adobedtm.com,DIRECT"));
   assert.equal(result.rules.at(-1), "MATCH,漏网之鱼");
-  // Untouched parts of the subscription stay untouched.
-  assert.deepEqual(plain(result.proxies), snapshot.proxies);
-  // No group was rewritten in degraded mode.
-  assert.deepEqual(
-    plain(result["proxy-groups"].map((group) => group.name)),
-    snapshot["proxy-groups"].map((group) => group.name),
-  );
+  assertNoDanglingTargets(result);
+
+  const marker = plain(result.__flclashRules);
+  assert.equal(marker.applied, true);
+  assert.equal(marker.mode, "no-nodes");
+  assert.ok(marker.rules < 128);
+  assert.ok(marker.warnings.some((warning) => warning.includes("no usable AI node source")));
+});
+
+test("a subscription without proxy-groups degrades without breaking", () => {
+  const { main } = loadMain();
+  const config = { rules: ["MATCH,漏网之鱼"] };
+  const result = loadMain().main(config);
+
+  assert.equal(result.__flclashRules.mode, "degraded");
+  assertNoDanglingTargets(result);
+  // Only DIRECT/REJECT rules can survive when no group exists at all.
+  for (const rule of result.rules) {
+    const parts = rule.split(",").map((part) => part.trim());
+    if (parts[0] === "MATCH") continue;
+    assert.ok(
+      parts[parts.length - 1] === "no-resolve"
+        ? parts[parts.length - 2] === "DIRECT"
+        : parts[parts.length - 1] === "DIRECT" || parts[parts.length - 1] === "REJECT",
+      `unexpected retained rule: ${rule}`,
+    );
+  }
+  assert.equal(result.rules.at(-1), "MATCH,漏网之鱼");
 });
 
 test("missing fallback group only skips the fallback adjustment", () => {
   const errors = [];
   const config = sampleConfig();
-  config["proxy-groups"] = config["proxy-groups"].filter((group) => group.name !== "漏网之鱼");
+  config["proxy-groups"] = config["proxy-groups"].filter(
+    (group) => group.name !== "漏网之鱼",
+  );
   const result = loadMain(errors).main(config);
 
   assert.equal(result.__flclashRules.applied, true);
   assert.equal(result.__flclashRules.mode, "inline");
-  assert.ok(result.__flclashRules.warnings.some((warning) => warning.includes("漏网之鱼")));
-  const byName = (name) => result["proxy-groups"].find((group) => group.name === name);
-  assert.deepEqual(plain(byName("Ai稳定选择").proxies), US_NODES);
+  assert.ok(
+    result.__flclashRules.warnings.some((warning) => warning.includes("漏网之鱼")),
+  );
+  assert.deepEqual(plain(byName(result, "Ai稳定选择").proxies), US_NODES);
   assert.equal(result.rules.at(-1), "MATCH,漏网之鱼");
 });
 
-test("hard failure returns the original config with a full stack trace", () => {
+test("invalid subscription returns the original config with a full stack", () => {
   const errors = [];
   const config = sampleConfig();
-  delete config.proxies; // no inline nodes and no proxy-providers -> throw
+  // Duplicate group names: unrecoverable, so the whole override is refused.
+  config["proxy-groups"].push({ name: "自动选择", type: "select", proxies: [] });
   const snapshot = plain(config);
   const result = loadMain(errors).main(config);
 
   assert.strictEqual(result, config);
   assert.deepEqual(plain(result), snapshot);
   assert.match(errors[0], /extension skipped/);
-  assert.match(errors[0], /at /); // the logged error includes the stack
+  assert.match(errors[0], /at /);
 });
 
 test("fail-safe return does not depend on a console implementation", () => {
   const config = sampleConfig();
-  delete config.proxies;
+  config["proxy-groups"].push({ name: "自动选择", type: "select", proxies: [] });
   assert.strictEqual(loadMainWithoutConsole()(config), config);
+  assert.strictEqual(loadMainWithoutConsole()(null), null);
 });
 
 test("generated extension has no runtime fetch or unapproved URLs", () => {

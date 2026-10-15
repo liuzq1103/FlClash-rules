@@ -1,0 +1,10 @@
+# High-priority DIRECT exceptions: must stay ahead of every other rule-set on
+# both client and server, because they are either correctness-critical
+# (research data must not burn a paid node) or already network-local.
+payload:
+  # SEA-AD research data must never consume a paid proxy node.
+  - DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com
+
+  # NCBI is not blocked anywhere; direct is faster and keeps E-utilities
+  # sessions stable. Verified DIRECT on the server config.
+  - DOMAIN-SUFFIX,ncbi.nlm.nih.gov

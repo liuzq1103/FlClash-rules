@@ -3,24 +3,41 @@ rule-sets:
   # DIRECT. Scholar's exact DOMAIN rules deliberately precede ALL Ai+ rules:
   # mihomo is first-match, so a future (or stale) DOMAIN-SUFFIX,google.com in
   # Ai+ must never shadow DOMAIN,scholar.google.com -> 学术搜索.
+  #
+  # Optional per-rule-set fields:
+  #   target:          policy target used by the client artifact (required)
+  #   server-target:   policy target used by the server artifact; defaults to
+  #                    `target`. Lets one rule list serve both environments.
+  #   artifacts:       which artifacts consume this rule-set; defaults to both.
+  #                    Use [client] for rules that only matter on desktops.
   - name: Custom-Reject
     file: reject.yaml
     target: REJECT
+    artifacts: [client]
+  - name: Custom-Priority
+    file: priority.yaml
+    target: DIRECT
   - name: Custom-Scholar
     file: scholar.yaml
     target: 学术搜索
   - name: Custom-AI
     file: ai.yaml
     target: Ai+
+  - name: Custom-Dev
+    file: dev.yaml
+    target: Ai+
+    server-target: Dev+
   - name: Custom-Academic
     file: academic.yaml
     target: 学术访问
   - name: Custom-Tailscale
     file: tailscale.yaml
     target: DIRECT
+    artifacts: [client]
   - name: Custom-Direct
     file: direct.yaml
     target: DIRECT
+    artifacts: [client]
 
 # ChatGPT and the shared Cloudflare verification endpoint must stay on Ai+.
 # Academic sites use a separate DIRECT-first selector so a temporary challenge

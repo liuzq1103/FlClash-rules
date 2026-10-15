@@ -24,16 +24,24 @@ LEGACY_AI_AUTO_GROUP = "Ai自动选择"
 SCHOLAR_GROUP = "学术搜索"
 ACADEMIC_GROUP = "学术访问"
 FALLBACK_GROUP = "漏网之鱼"
+DEV_GROUP = "Dev+"
+PROXY_GROUP = "PROXY"
 CUSTOM_PROVIDER_PREFIX = "Custom-"
 SERVER_PROVIDER = "subscription"
 
-# Health probe for the url-test AI groups. The primary endpoint verifies the
-# node can really reach OpenAI (and filters nodes that are online but
-# IP-banned by OpenAI); the backup only proves generic connectivity. Switch
-# to the backup when the primary endpoint dies, and confirm the endpoint is
-# reachable before changing any probe URL.
+# Generated artifacts: the desktop extension script and the server policy.
+ARTIFACT_CLIENT = "client"
+ARTIFACT_SERVER = "server"
+ARTIFACTS = (ARTIFACT_CLIENT, ARTIFACT_SERVER)
+
+# Health probes. The primary AI probe verifies the node can really reach
+# OpenAI (and filters nodes that are online but IP-banned by OpenAI); the
+# backup only proves generic connectivity. The plain group probe is cheap
+# connectivity for non-AI traffic. Confirm an endpoint is reachable before
+# changing any probe URL.
 AI_PROBE_URL = "https://chatgpt.com/cdn-cgi/trace"
 AI_PROBE_URL_BACKUP = "https://www.gstatic.com/generate_204"
+GENERIC_PROBE_URL = "https://www.gstatic.com/generate_204"
 
 # Built-in non-proxy node types that must never join an AI group.
 NON_PROXY_TYPES = {
@@ -57,11 +65,21 @@ AI_INCLUDE_FILTER = (
     r"(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))"
 )
 
+# Development traffic is not geo-restricted, so the server's Dev+ group also
+# accepts Hong Kong nodes: large pulls and CI jobs are faster from a nearby
+# exit. AI/geo-restricted domains never use this filter.
+DEV_INCLUDE_FILTER = (
+    r"(?i)(?:🇭🇰|香港|hong[ -]?kong|(?:^|[^a-z])hk(?:[^a-z]|$)|"
+    r"🇺🇸|美国|美國|united[ -]?states|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))"
+)
+
 # Informational-node filter: strips airport info lines only (Expire/Traffic/
-# Sync/官网/套餐/剩余流量...). Region filtering is AI_INCLUDE_FILTER's job; a
-# US-named node stays even if its name also contains region words such as 香港.
+# Sync/官网/套餐/剩余流量/到期/重置...). Region filtering is AI_INCLUDE_FILTER's
+# job; a US-named node stays even if its name also contains region words such
+# as 香港. Observed variants: "剩余流量: 876.18 GB", "距离下次重置剩余：24 天",
+# "套餐到期：2027-10-08", "官网 xxx.xyz 群组 t.me/...".
 AI_EXCLUDE_FILTER = (
-    r"(?i)(?:🇺🇳|剩余流量|流量剩余|到期时间|过期时间|重置时间|套餐提示|订阅信息|"
+    r"(?i)(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|"
     r"(?:^|[\s|_-])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)"
     r"(?:[\s:：|_-]|$))"
 )
@@ -150,6 +168,32 @@ def _rule_shadows(earlier, later):
     return False
 
 
+def _rule_set_targets(definition, artifact, index_path, position):
+    """Return {artifact: effective target} for one rule-set definition."""
+    target = definition["target"]
+    server_target = definition.get("server-target")
+    if server_target is not None and (
+        not isinstance(server_target, str) or not server_target
+    ):
+        raise ConfigError(
+            f"{index_path}: rule-set #{position} has an invalid server-target"
+        )
+    artifacts = definition.get("artifacts", list(ARTIFACTS))
+    if (
+        not isinstance(artifacts, list)
+        or not artifacts
+        or any(item not in ARTIFACTS for item in artifacts)
+    ):
+        raise ConfigError(
+            f"{index_path}: rule-set #{position} artifacts must be a non-empty subset "
+            f"of {list(ARTIFACTS)}"
+        )
+    return {
+        ARTIFACT_CLIENT: target,
+        ARTIFACT_SERVER: server_target or target,
+    }, artifacts
+
+
 def load_rule_sets(index_path=RULES_INDEX):
     index_path = Path(index_path)
     index = load_yaml(index_path)
@@ -160,7 +204,7 @@ def load_rule_sets(index_path=RULES_INDEX):
     names = set()
     files = set()
     exact_rules = {}
-    parsed_rules = []
+    parsed_rules = []  # (type, value, normalized, {artifact: target})
     rule_targets = {}
     rule_sets = []
 
@@ -179,6 +223,8 @@ def load_rule_sets(index_path=RULES_INDEX):
             raise ConfigError(f"{index_path}: duplicate provider name: {name}")
         if file_name in files:
             raise ConfigError(f"{index_path}: duplicate rule file: {file_name}")
+
+        targets, artifacts = _rule_set_targets(definition, None, index_path, position)
 
         rule_path = (index_path.parent / file_name).resolve()
         if rule_path.parent != index_path.parent.resolve():
@@ -201,16 +247,24 @@ def load_rule_sets(index_path=RULES_INDEX):
                     f"{normalized}"
                 )
 
-            for earlier in parsed_rules:
-                if earlier[3] == target and _rule_shadows(earlier[:3], parsed):
-                    raise ConfigError(
-                        f"redundant rule in {rule_path}:{line_number}: {normalized}; "
-                        f"covered by {earlier[2]}"
-                    )
+            # Shadowing depends on the *effective* target, which can differ per
+            # artifact, so every artifact is validated independently.
+            for artifact in artifacts:
+                for earlier in parsed_rules:
+                    earlier_targets = earlier[3]
+                    if artifact not in earlier_targets:
+                        continue
+                    if earlier_targets[artifact] != targets[artifact]:
+                        continue
+                    if _rule_shadows(earlier[:3], parsed):
+                        raise ConfigError(
+                            f"redundant rule in {rule_path}:{line_number}: {normalized}; "
+                            f"covered by {earlier[2]} ({artifact})"
+                        )
 
             exact_rules[normalized] = f"{rule_path}:{line_number}"
-            parsed_rules.append((parsed[0], parsed[1], parsed[2], target))
-            rule_targets[normalized] = target
+            parsed_rules.append((parsed[0], parsed[1], parsed[2], targets))
+            rule_targets[normalized] = targets
             normalized_payload.append(normalized)
 
         names.add(name)
@@ -220,6 +274,8 @@ def load_rule_sets(index_path=RULES_INDEX):
                 "name": name,
                 "file": file_name,
                 "target": target,
+                "server-target": targets[ARTIFACT_SERVER],
+                "artifacts": artifacts,
                 "payload": normalized_payload,
             }
         )
@@ -247,16 +303,19 @@ def load_rule_sets(index_path=RULES_INDEX):
                 raise ConfigError(
                     f"{index_path}: route-constraint {constraint_name} has an invalid rule"
                 )
-            actual_target = rule_targets.get(constrained_rule)
-            if actual_target is None:
+            rule_target_map = rule_targets.get(constrained_rule)
+            if rule_target_map is None:
                 raise ConfigError(
                     f"{index_path}: route-constraint {constraint_name} references a missing rule: "
                     f"{constrained_rule}"
                 )
-            if actual_target != constraint_target:
+            # A constraint pins the client target; the server artifact may send
+            # the same domain elsewhere on purpose (see dev.yaml).
+            if rule_target_map[ARTIFACT_CLIENT] != constraint_target:
                 raise ConfigError(
                     f"{index_path}: route-constraint {constraint_name} requires "
-                    f"{constrained_rule} -> {constraint_target}, found {actual_target}"
+                    f"{constrained_rule} -> {constraint_target}, found "
+                    f"{rule_target_map[ARTIFACT_CLIENT]}"
                 )
         constraint_names.add(constraint_name)
 
@@ -300,32 +359,46 @@ def _provider_names(config):
     return [name for name in providers if isinstance(name, str) and name]
 
 
+def _provider_filter_fields(include_filter, providers):
+    """Fields that make a group resolve provider nodes at runtime."""
+    return {"use": list(providers), "filter": include_filter, "exclude-filter": AI_EXCLUDE_FILTER}
+
+
 def configure_ai_groups(config):
-    """Mirror of the override script's configureGroups; returns the mode.
+    """Mirror of the override script's group construction; returns the mode.
 
     "inline" enumerates US nodes from config.proxies; "provider" subscriptions
-    have no enumerable node list, so Ai+ gets use+filter and the core resolves
-    nodes at runtime.
+    cannot be enumerated at build time, so the same three-group shape is built
+    with use+filter and the core fills in the nodes at runtime. Both modes
+    produce an identical group structure, so a new airport only changes which
+    node source is used, not how the policy looks. "no-nodes" means the source
+    has no usable node at all: nothing is built, and rule injection drops the
+    rule-sets whose target would then not exist.
     """
     groups = config.get("proxy-groups")
     if not isinstance(groups, list):
         raise ConfigError("source config must contain a proxy-groups list")
 
-    ai_group = _group_by_name(config, AI_GROUP)
-    if ai_group is None:
-        raise ConfigError(f"source config is missing required proxy group: {AI_GROUP}")
-
     nodes = _eligible_ai_nodes(config)
     providers = _provider_names(config)
-    if nodes:
-        mode = "inline"
-    elif providers:
-        mode = "provider"
-    else:
-        raise ConfigError(
-            "source config exposes neither usable inline proxies nor "
-            "proxy-providers for AI nodes"
+    if not nodes and not providers:
+        return "no-nodes"
+
+    mode = "inline" if nodes else "provider"
+    ai_group = _group_by_name(config, AI_GROUP)
+    if ai_group is None:
+        # A different airport may not ship an Ai+ group. Create it so the
+        # AI/Scholar/Academic rules stay valid instead of being dropped.
+        ai_group = {"name": AI_GROUP, "type": "select", "proxies": []}
+        fallback_index = next(
+            (
+                index
+                for index, group in enumerate(groups)
+                if group.get("name") == FALLBACK_GROUP
+            ),
+            len(groups),
         )
+        groups.insert(fallback_index, ai_group)
 
     groups[:] = [
         group
@@ -341,74 +414,51 @@ def configure_ai_groups(config):
     ]
     ai_index = groups.index(ai_group)
 
+    ai_stable = {"name": AI_STABLE_GROUP, "type": "select"}
+    ai_auto = {
+        "name": AI_AUTO_GROUP,
+        "type": "url-test",
+        "url": AI_PROBE_URL,
+        "interval": 300,
+        "tolerance": 50,
+        "lazy": True,
+        "timeout": 8000,
+        "max-failed-times": 2,
+        "expected-status": 200,
+    }
     if mode == "inline":
-        ai_stable = {
-            "name": AI_STABLE_GROUP,
-            "type": "select",
-            "proxies": nodes,
-        }
-        ai_auto = {
-            "name": AI_AUTO_GROUP,
-            "type": "url-test",
-            "proxies": nodes,
-            "url": AI_PROBE_URL,
-            "interval": 300,
-            "tolerance": 50,
-            "lazy": True,
-            "timeout": 8000,
-            "max-failed-times": 2,
-            "expected-status": 200,
-        }
-        scholar = {
-            "name": SCHOLAR_GROUP,
-            "type": "select",
-            "proxies": [AI_STABLE_GROUP, AI_AUTO_GROUP],
-        }
-        academic = {
-            "name": ACADEMIC_GROUP,
-            "type": "select",
-            "proxies": ["DIRECT", AI_GROUP],
-        }
-        groups[ai_index:ai_index] = [ai_stable, ai_auto, scholar, academic]
-
-        # Explicit node lists avoid runtime compatibility problems in FlClash
-        # versions that display newer dynamic fields but do not preserve them.
-        ai_group["proxies"] = [AI_STABLE_GROUP, AI_AUTO_GROUP]
-        for key in (
-            "include-all",
-            "include-all-proxies",
-            "include-all-providers",
-            "filter",
-            "exclude-filter",
-            "exclude-type",
-            "default-selected",
-            "empty-fallback",
-        ):
-            ai_group.pop(key, None)
+        ai_stable["proxies"] = list(nodes)
+        ai_auto["proxies"] = list(nodes)
     else:
-        scholar = {
-            "name": SCHOLAR_GROUP,
-            "type": "select",
-            "proxies": [AI_GROUP],
-        }
-        academic = {
-            "name": ACADEMIC_GROUP,
-            "type": "select",
-            "proxies": ["DIRECT", AI_GROUP],
-        }
-        groups[ai_index:ai_index] = [scholar, academic]
-        ai_group["use"] = providers
-        ai_group["filter"] = AI_INCLUDE_FILTER
-        ai_group["exclude-filter"] = AI_EXCLUDE_FILTER
-        for key in (
-            "include-all",
-            "include-all-proxies",
-            "include-all-providers",
-            "exclude-type",
-            "default-selected",
-            "empty-fallback",
-        ):
-            ai_group.pop(key, None)
+        ai_stable.update(_provider_filter_fields(AI_INCLUDE_FILTER, providers))
+        ai_auto.update(_provider_filter_fields(AI_INCLUDE_FILTER, providers))
+    scholar = {
+        "name": SCHOLAR_GROUP,
+        "type": "select",
+        "proxies": [AI_STABLE_GROUP, AI_AUTO_GROUP],
+    }
+    academic = {
+        "name": ACADEMIC_GROUP,
+        "type": "select",
+        "proxies": ["DIRECT", AI_GROUP],
+    }
+    groups[ai_index:ai_index] = [ai_stable, ai_auto, scholar, academic]
+
+    # Explicit member lists avoid runtime compatibility problems in FlClash
+    # versions that display newer dynamic fields but do not preserve them.
+    ai_group["type"] = "select"
+    ai_group["proxies"] = [AI_STABLE_GROUP, AI_AUTO_GROUP]
+    for key in (
+        "include-all",
+        "include-all-proxies",
+        "include-all-providers",
+        "filter",
+        "exclude-filter",
+        "exclude-type",
+        "default-selected",
+        "empty-fallback",
+    ):
+        ai_group.pop(key, None)
 
     fallback = _group_by_name(config, FALLBACK_GROUP)
     if fallback is None:
@@ -437,15 +487,23 @@ def fix_provider_paths(config):
             apple["path"] = "./providers/rule/Apple.yaml"
 
 
-def _expand_custom_rules(rule_sets):
+def _expand_custom_rules(rule_sets, artifact=ARTIFACT_CLIENT):
+    """Expand rule-set payloads into plain rules for one artifact.
+
+    Only rule-sets listed in the artifact's `artifacts` are included, and each
+    rule gets that artifact's effective target (see server-target in index.yml).
+    """
     expanded = []
     for rule_set in rule_sets:
+        if artifact not in rule_set["artifacts"]:
+            continue
+        target = rule_set.get("server-target") if artifact == ARTIFACT_SERVER else rule_set["target"]
         for payload_rule in rule_set["payload"]:
             parts = [part.strip() for part in payload_rule.split(",")]
             if parts[-1] == "no-resolve":
-                parts.insert(-1, rule_set["target"])
+                parts.insert(-1, target)
             else:
-                parts.append(rule_set["target"])
+                parts.append(target)
             expanded.append(",".join(parts))
     return expanded
 
@@ -462,7 +520,29 @@ def _rule_match_key(rule):
     return ",".join(key)
 
 
-def merge_custom_rules(config, rule_sets):
+def available_policy_targets(config):
+    """Every target a rule may legally point at in this configuration."""
+    group_names = {
+        group.get("name")
+        for group in config.get("proxy-groups", [])
+        if isinstance(group, dict) and group.get("name")
+    }
+    proxy_names = {
+        proxy.get("name")
+        for proxy in config.get("proxies", [])
+        if isinstance(proxy, dict) and proxy.get("name")
+    }
+    return group_names | proxy_names | BUILTIN_TARGETS
+
+
+def merge_custom_rules(config, rule_sets, artifact=ARTIFACT_CLIENT):
+    """Prepend the custom rules, skipping any whose target does not exist.
+
+    A subscription from a different airport may not define our groups at all.
+    Injecting a rule whose policy target is missing would make mihomo refuse
+    the whole config, which is worse than skipping that rule-set: we keep every
+    rule whose target survives and let the caller report the rest.
+    """
     providers = config.setdefault("rule-providers", {})
     if not isinstance(providers, dict):
         raise ConfigError("source rule-providers must be a mapping")
@@ -474,13 +554,18 @@ def merge_custom_rules(config, rule_sets):
     source_rules = config.get("rules")
     if not isinstance(source_rules, list):
         raise ConfigError("source config must contain a rules list")
-    custom_rules = _expand_custom_rules(rule_sets)
+
+    allowed = available_policy_targets(config)
+    all_custom_rules = _expand_custom_rules(rule_sets, artifact)
+    custom_rules = []
+    for rule in all_custom_rules:
+        target = _rule_target(rule)
+        if target and target not in allowed:
+            continue
+        custom_rules.append(rule)
+
     custom_rule_set = set(custom_rules)
-    custom_match_keys = {
-        _rule_match_key(rule)
-        for rule_set in rule_sets
-        for rule in rule_set["payload"]
-    }
+    custom_match_keys = {_rule_match_key(rule) for rule in custom_rules}
     source_rules = [
         rule
         for rule in source_rules
@@ -494,14 +579,15 @@ def merge_custom_rules(config, rule_sets):
         )
     ]
     config["rules"] = custom_rules + source_rules
+    return custom_rules
 
 
 def apply_customizations(source_config, rule_sets):
     config = copy.deepcopy(source_config)
     fix_provider_paths(config)
     mode = configure_ai_groups(config)
-    merge_custom_rules(config, rule_sets)
-    validate_config(config, rule_sets, mode)
+    retained = merge_custom_rules(config, rule_sets, ARTIFACT_CLIENT)
+    validate_config(config, retained, mode)
     return config
 
 
@@ -514,7 +600,13 @@ def _rule_target(rule):
     return parts[2] if len(parts) > 2 else None
 
 
-def validate_config(config, rule_sets, mode="inline"):
+def validate_config(config, retained_rules, mode="inline"):
+    """Validate the merged client configuration.
+
+    `retained_rules` are the custom rules that survived target filtering; they
+    must sit at the head of the rule list in declared order, and every one of
+    them must point at a target this configuration actually defines.
+    """
     if not isinstance(config, dict):
         raise ConfigError("configuration root must be a mapping")
 
@@ -564,7 +656,7 @@ def validate_config(config, rule_sets, mode="inline"):
         if target and target not in valid_targets:
             raise ConfigError(f"rule references missing policy target {target}: {rule}")
 
-    expected_prefix = _expand_custom_rules(rule_sets)
+    expected_prefix = list(retained_rules)
     if rules[: len(expected_prefix)] != expected_prefix:
         raise ConfigError("custom rules are not at the beginning in the declared priority order")
     if not rules or not rules[-1].startswith("MATCH,"):
@@ -576,17 +668,30 @@ def validate_config(config, rule_sets, mode="inline"):
     scholar = _group_by_name(config, SCHOLAR_GROUP)
     academic = _group_by_name(config, ACADEMIC_GROUP)
     fallback = _group_by_name(config, FALLBACK_GROUP)
+    if mode == "no-nodes":
+        # Nothing was configured; only the "no dangling target" invariant and
+        # the rule order matter here.
+        if not retained_rules:
+            raise ConfigError("no custom rules could be injected")
+        return
     if mode == "provider":
-        if not ai_group or not ai_group.get("use") or ai_group.get("filter") != AI_INCLUDE_FILTER:
-            raise ConfigError(f"{AI_GROUP} must select provider nodes with the US whitelist filter")
-        if not scholar or scholar.get("proxies") != [AI_GROUP]:
-            raise ConfigError(f"{SCHOLAR_GROUP} must follow the provider-backed {AI_GROUP} exit")
+        if not ai_stable or not ai_stable.get("use") or ai_stable.get("filter") != AI_INCLUDE_FILTER:
+            raise ConfigError(f"{AI_STABLE_GROUP} must resolve provider nodes with the US whitelist filter")
+        if not ai_auto or not ai_auto.get("use") or ai_auto.get("filter") != AI_INCLUDE_FILTER:
+            raise ConfigError(f"{AI_AUTO_GROUP} must resolve provider nodes with the US whitelist filter")
+        if not ai_group or ai_group.get("proxies") != [AI_STABLE_GROUP, AI_AUTO_GROUP]:
+            raise ConfigError(f"{AI_GROUP} must prefer stable selection and keep auto as backup")
+        if not scholar or scholar.get("proxies") != [AI_STABLE_GROUP, AI_AUTO_GROUP]:
+            raise ConfigError(f"{SCHOLAR_GROUP} must share the stable AI exit")
     else:
         if not ai_stable or not ai_stable.get("proxies"):
             raise ConfigError(f"{AI_STABLE_GROUP} must contain explicit proxy nodes")
         if not ai_auto or not ai_auto.get("proxies"):
             raise ConfigError(f"{AI_AUTO_GROUP} must contain explicit proxy nodes")
-        if not ai_group or ai_group.get("proxies") != [AI_STABLE_GROUP, AI_AUTO_GROUP]:
+        if not ai_group or ai_group.get("type") != "select" or ai_group.get("proxies") != [
+            AI_STABLE_GROUP,
+            AI_AUTO_GROUP,
+        ]:
             raise ConfigError(f"{AI_GROUP} must prefer stable selection and keep auto as backup")
         if not scholar or scholar.get("proxies") != [AI_STABLE_GROUP, AI_AUTO_GROUP]:
             raise ConfigError(f"{SCHOLAR_GROUP} must share the stable AI exit")
@@ -629,7 +734,7 @@ def render_override_script(rule_sets, template_path=TEMPLATE_PATH):
     if template.count(marker) != 1:
         raise ConfigError(f"extension template must contain exactly one {marker} marker")
     rules_json = json.dumps(
-        _expand_custom_rules(rule_sets), ensure_ascii=False, indent=2
+        _expand_custom_rules(rule_sets, ARTIFACT_CLIENT), ensure_ascii=False, indent=2
     )
     script = template.replace(marker, rules_json)
     if marker in script or "function main(config)" not in script:
@@ -638,36 +743,71 @@ def render_override_script(rule_sets, template_path=TEMPLATE_PATH):
 
 
 def build_server_policy(rule_sets):
-    """Build the non-secret policy fragment used by liuzq's server Mihomo."""
-    return {
-        "proxy-groups": [
-            {
-                "name": AI_GROUP,
-                "type": "url-test",
-                "use": [SERVER_PROVIDER],
-                "filter": AI_INCLUDE_FILTER,
-                "exclude-filter": AI_EXCLUDE_FILTER,
-                "url": AI_PROBE_URL,
-                "interval": 300,
-                "tolerance": 50,
-                "lazy": True,
-                "timeout": 8000,
-                "max-failed-times": 2,
-                "expected-status": 200,
-            },
-            {
-                "name": SCHOLAR_GROUP,
-                "type": "select",
-                "proxies": [AI_GROUP, "DIRECT"],
-            },
-            {
-                "name": ACADEMIC_GROUP,
-                "type": "select",
-                "proxies": ["DIRECT", AI_GROUP],
-            },
-        ],
-        "rules": _expand_custom_rules(rule_sets) + ["MATCH,DIRECT"],
+    """Build the non-secret policy fragment used by liuzq's server Mihomo.
+
+    The server always uses a `subscription` proxy-provider, so every group
+    resolves nodes with use+filter at runtime. The AI shape mirrors the
+    desktop script (stable pick + probed backup), and Dev+ adds an
+    all-region fastest node because large pulls and CI jobs prefer a nearby
+    exit over a US one.
+    """
+    def provider_fields(include_filter=None):
+        """Fresh provider fields per group (no shared YAML anchors on dump)."""
+        fields = {"use": [SERVER_PROVIDER], "exclude-filter": AI_EXCLUDE_FILTER}
+        if include_filter:
+            fields["filter"] = include_filter
+        return fields
+
+    ai_stable = {
+        "name": AI_STABLE_GROUP,
+        "type": "select",
+        **provider_fields(AI_INCLUDE_FILTER),
     }
+    ai_auto = {
+        "name": AI_AUTO_GROUP,
+        "type": "url-test",
+        **provider_fields(AI_INCLUDE_FILTER),
+        "url": AI_PROBE_URL,
+        "interval": 300,
+        "tolerance": 50,
+        "lazy": True,
+        "timeout": 8000,
+        "max-failed-times": 2,
+        "expected-status": 200,
+    }
+    proxy_group = {
+        "name": PROXY_GROUP,
+        "type": "url-test",
+        **provider_fields(),
+        "url": GENERIC_PROBE_URL,
+        "interval": 300,
+        "tolerance": 50,
+    }
+    dev_group = {
+        "name": DEV_GROUP,
+        "type": "select",
+        **provider_fields(DEV_INCLUDE_FILTER),
+        "proxies": [PROXY_GROUP],
+    }
+    groups = [
+        proxy_group,
+        ai_stable,
+        ai_auto,
+        {"name": AI_GROUP, "type": "select", "proxies": [AI_STABLE_GROUP, AI_AUTO_GROUP]},
+        dev_group,
+        {"name": SCHOLAR_GROUP, "type": "select", "proxies": [AI_GROUP, "DIRECT"]},
+        {"name": ACADEMIC_GROUP, "type": "select", "proxies": ["DIRECT", AI_GROUP]},
+    ]
+
+    rules = _expand_custom_rules(rule_sets, ARTIFACT_SERVER) + ["MATCH,DIRECT"]
+    group_names = {group["name"] for group in groups} | BUILTIN_TARGETS
+    for rule in rules:
+        target = _rule_target(rule)
+        if target and target not in group_names:
+            raise ConfigError(
+                f"server policy rule references unknown target {target}: {rule}"
+            )
+    return {"proxy-groups": groups, "rules": rules}
 
 
 def render_server_policy(rule_sets):

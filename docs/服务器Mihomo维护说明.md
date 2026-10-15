@@ -48,13 +48,17 @@ dist/server-policy.yaml
 
 ## 2. server-policy 的固定设计
 
-`dist/server-policy.yaml` 包含：
+`dist/server-policy.yaml` 包含 7 个组（全部用 `use: [subscription]` 在运行时取节点）：
 
-- `Ai+`：`url-test`，动态使用名为 `subscription` 的 provider；
+- `PROXY`：`url-test`，全地区最快节点，探针 `generate_204`，只剔除机场信息行；
+- `Ai稳定选择`：`select`，`filter` 为美国白名单，人工锁定；
+- `Ai测速备用`：`url-test`，同样的美国 `filter`，探针 `chatgpt.com/cdn-cgi/trace` 且要求 `200`；
+- `Ai+`：`select`，`[Ai稳定选择, Ai测速备用]`，稳定优先；
+- `Dev+`：`select`，`filter` 为「美国 + 香港」，默认项是 `PROXY`，供 GitHub / HuggingFace / Docker / Cursor 使用；
 - `学术搜索`：`Ai+` 在前，`DIRECT` 备选；
 - `学术访问`：`DIRECT` 在前，`Ai+` 备选；
-- 129 条自定义规则；
-- 最后一条 `MATCH,DIRECT`。
+
+外加服务器用到的自定义规则（最后一条 `MATCH,DIRECT`）。桌面专用的规则（广告拦截、Tailscale、Adobe/Microsoft）不会进入本文件，因为它们在 `rules/index.yml` 里标了 `artifacts: [client]`；`rules/dev.yaml` 在这里被编译成 `Dev+`（`server-target`）。
 
 它不包含：
 
@@ -254,12 +258,23 @@ mihomo_logs --since '5 minutes ago'
 
 ```text
 chatgpt.com → Ai+
-github.com → Ai+
+claude.ai → Ai+
+github.com → Dev+
+huggingface.co → Dev+
 science.org → 学术访问[DIRECT]
 SEA-AD → DIRECT
 ```
 
 未认证请求必须失败。
+
+## 10.1 凭据卫生（重要）
+
+服务器 `config.yaml` 含三类敏感信息：**订阅 URL 及其 token、Listener 用户名密码、`external-controller` 的 `secret`**。要求：
+
+- 该文件只放在服务器权限收紧的目录，绝不进入本仓库（仓库里的 `local/`、`input/`、`output/` 已在 `.gitignore` 中排除）；
+- 不要把完整 `config.yaml` 贴进聊天、issue 或 PR；需要讨论配置结构时先把这些值替换成占位符；
+- 这些值一旦以明文外流（贴进对话、聊天记录、截图），**必须整体轮换**：重新生成订阅 token、改 Listener 密码、改 `secret`，并同步更新 provider 缓存里已保存的旧订阅 URL；
+- 轮换后按第 9 节复测，确认 Listener 认证与代理出口都正常。
 
 ## 11. 大文件原则
 

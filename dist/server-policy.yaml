@@ -3,7 +3,7 @@ proxy-groups:
   type: url-test
   use:
   - subscription
-  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\s|_\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_\-\d【】()（）]|$))
+  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|距离下次重置|重置剩余|到期时间|过期时间|套餐到期|套餐提示|订阅信息|(?:^|[\s|_\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_\-\d【】()（）]|$)|(?:到期|过期|重置)[:：\s_|-]*\d{4}|剩余[:：\s_|-]*\d)
   url: https://www.gstatic.com/generate_204
   interval: 300
   tolerance: 50
@@ -11,13 +11,13 @@ proxy-groups:
   type: select
   use:
   - subscription
-  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\s|_\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_\-\d【】()（）]|$))
+  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|距离下次重置|重置剩余|到期时间|过期时间|套餐到期|套餐提示|订阅信息|(?:^|[\s|_\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_\-\d【】()（）]|$)|(?:到期|过期|重置)[:：\s_|-]*\d{4}|剩余[:：\s_|-]*\d)
   filter: (?i)(?:🇺🇸|美国|美國|america|united[ -]?states|u\.s\.a\.?|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))
 - name: Ai测速备用
   type: url-test
   use:
   - subscription
-  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\s|_\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_\-\d【】()（）]|$))
+  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|距离下次重置|重置剩余|到期时间|过期时间|套餐到期|套餐提示|订阅信息|(?:^|[\s|_\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_\-\d【】()（）]|$)|(?:到期|过期|重置)[:：\s_|-]*\d{4}|剩余[:：\s_|-]*\d)
   filter: (?i)(?:🇺🇸|美国|美國|america|united[ -]?states|u\.s\.a\.?|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))
   url: https://chatgpt.com/cdn-cgi/trace
   interval: 300
@@ -35,7 +35,7 @@ proxy-groups:
   type: select
   use:
   - subscription
-  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\s|_\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_\-\d【】()（）]|$))
+  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|距离下次重置|重置剩余|到期时间|过期时间|套餐到期|套餐提示|订阅信息|(?:^|[\s|_\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_\-\d【】()（）]|$)|(?:到期|过期|重置)[:：\s_|-]*\d{4}|剩余[:：\s_|-]*\d)
   filter: (?i)(?:🇭🇰|香港|hong[ -]?kong|(?:^|[^a-z])hk(?:[^a-z]|$)|hkg|🇺🇸|美国|美國|america|united[ -]?states|u\.s\.a\.?|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))
   proxies:
   - PROXY

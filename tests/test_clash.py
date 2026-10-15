@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import yaml
+
 import clash
 
 
@@ -26,7 +28,8 @@ NANO_INFO_NODES = [
     "剩余流量: 876.18 GB",
     "距离下次重置剩余：24 天",
     "套餐到期：2027-10-08",
-    "官网 小黑子.xyz chicken.fufufu.sbs 群组 t.me/nekoport",
+    # Airport hostnames are anonymised: the filter only needs the shape.
+    "官网 example.invalid example2.invalid 群组 t.me/example",
 ]
 
 
@@ -276,21 +279,90 @@ class RuleLoadingTests(unittest.TestCase):
                 clash.load_rule_sets(index)
 
     def test_invalid_artifact_and_server_target_are_rejected(self):
+        cases = [
+            ("artifacts: [desktop]", "artifacts"),
+            ("artifacts: [client, client]", "repeats an artifact"),
+            # A server-target that can never apply is a silent typo trap.
+            (
+                "artifacts: [client]\n    server-target: Dev+",
+                "not part of the server artifact",
+            ),
+        ]
+        for extra, message in cases:
+            with self.subTest(extra=extra):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    (root / "site.yaml").write_text(
+                        "payload:\n  - DOMAIN-SUFFIX,science.org\n", encoding="utf-8"
+                    )
+                    index = root / "index.yml"
+                    index.write_text(
+                        "rule-sets:\n"
+                        "  - name: Custom-Site\n"
+                        "    file: site.yaml\n"
+                        "    target: Ai+\n"
+                        f"    {extra}\n",
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(clash.ConfigError, message):
+                        clash.load_rule_sets(index)
+
+    def test_shadow_validation_respects_artifact_membership(self):
+        # The broader rule lives in a desktop-only rule-set and the narrower one
+        # in a server-only rule-set, so neither artifact contains a shadow even
+        # though both resolve to the same target.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "site.yaml").write_text(
-                "payload:\n  - DOMAIN-SUFFIX,science.org\n", encoding="utf-8"
+            (root / "broad.yaml").write_text(
+                "payload:\n  - DOMAIN-SUFFIX,nih.gov\n", encoding="utf-8"
+            )
+            (root / "narrow.yaml").write_text(
+                "payload:\n  - DOMAIN-SUFFIX,ncbi.nlm.nih.gov\n", encoding="utf-8"
             )
             index = root / "index.yml"
             index.write_text(
                 "rule-sets:\n"
-                "  - name: Custom-Site\n"
-                "    file: site.yaml\n"
-                "    target: Ai+\n"
-                "    artifacts: [desktop]\n",
+                "  - name: Custom-Broad\n"
+                "    file: broad.yaml\n"
+                "    target: REJECT\n"
+                "    artifacts: [client]\n"
+                "  - name: Custom-Narrow\n"
+                "    file: narrow.yaml\n"
+                "    target: REJECT\n"
+                "    artifacts: [server]\n",
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(clash.ConfigError, "artifacts"):
+            rule_sets = clash.load_rule_sets(index)
+            self.assertEqual(
+                clash._expand_custom_rules(rule_sets, clash.ARTIFACT_CLIENT),
+                ["DOMAIN-SUFFIX,nih.gov,REJECT"],
+            )
+            self.assertEqual(
+                clash._expand_custom_rules(rule_sets, clash.ARTIFACT_SERVER),
+                ["DOMAIN-SUFFIX,ncbi.nlm.nih.gov,REJECT"],
+            )
+
+    def test_shadow_validation_still_catches_real_same_artifact_shadow(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "broad.yaml").write_text(
+                "payload:\n  - DOMAIN-SUFFIX,nih.gov\n", encoding="utf-8"
+            )
+            (root / "narrow.yaml").write_text(
+                "payload:\n  - DOMAIN-SUFFIX,ncbi.nlm.nih.gov\n", encoding="utf-8"
+            )
+            index = root / "index.yml"
+            index.write_text(
+                "rule-sets:\n"
+                "  - name: Custom-Broad\n"
+                "    file: broad.yaml\n"
+                "    target: REJECT\n"
+                "  - name: Custom-Narrow\n"
+                "    file: narrow.yaml\n"
+                "    target: REJECT\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(clash.ConfigError, "redundant rule"):
                 clash.load_rule_sets(index)
 
 
@@ -300,6 +372,8 @@ class NodeFilterTests(unittest.TestCase):
         for name in US_NODES + NANO_US_NODES + [
             "USA-Los Angeles-02",
             "United States 03",
+            "America-Los Angeles 05",
+            "U.S.A 01",
             "美國-傳統命名",
             "🇺🇸 美国优化-香港专线",
         ]:
@@ -315,7 +389,14 @@ class NodeFilterTests(unittest.TestCase):
 
     def test_dev_include_adds_hong_kong(self):
         dev = re.compile(clash.DEV_INCLUDE_FILTER)
-        for name in ["🇭🇰 香港碳仔雞 | IPv4", "香港 01", "HK-02", "US-01", "🇺🇸 美国龙虾卷"]:
+        for name in [
+            "🇭🇰 香港碳仔雞 | IPv4",
+            "香港 01",
+            "HK-02",
+            "HKG-IEPL-03",  # IATA spelling: a letter follows "hk"
+            "US-01",
+            "🇺🇸 美国龙虾卷",
+        ]:
             self.assertRegex(name, dev)
         for name in ["🇯🇵 日本天妇罗", "Russia-Moscow-01", "剩余流量: 876.18 GB"]:
             self.assertNotRegex(name, dev)
@@ -326,11 +407,14 @@ class NodeFilterTests(unittest.TestCase):
             "Expire: 2027-08-18",
             "Traffic: 316.97GB | 1.66TB",
             "Sync: 2026-10-15 20:42:00",
-            "🇺🇳 官网 helloshudong.com|v202605",
+            "🇺🇳 官网 example.invalid|v202605",
             "剩余流量: 876.18 GB",
             "距离下次重置剩余：24 天",
             "套餐到期：2027-10-08",
-            "官网 小黑子.xyz 群组 t.me/nekoport",
+            "官网 example.invalid 群组 t.me/example",
+            "【官网】example.invalid",
+            "Expire20270818",
+            "Traffic20270818GB",
         ]:
             self.assertRegex(name, pattern)
         # Region filtering is AI_INCLUDE's job; real nodes stay.
@@ -401,8 +485,9 @@ class MergeTests(unittest.TestCase):
         config = {
             "proxy-providers": {"sub": {"type": "http", "url": "https://example.test/sub"}},
             "proxy-groups": [
+                {"name": "自动选择", "type": "url-test", "use": ["sub"]},
                 {"name": "Ai+", "type": "url-test", "proxies": []},
-                {"name": "漏网之鱼", "type": "select", "proxies": ["手动选择", "DIRECT"]},
+                {"name": "漏网之鱼", "type": "select", "proxies": ["自动选择", "DIRECT"]},
             ],
             "rule-providers": {},
             "rules": ["MATCH,漏网之鱼"],
@@ -463,6 +548,38 @@ class MergeTests(unittest.TestCase):
         self.assertTrue(targets <= {"DIRECT", "REJECT"})
         self.assertIn("DOMAIN-SUFFIX,tailscale.io,DIRECT", merged["rules"])
         self.assertEqual(merged["rules"][-1], "MATCH,漏网之鱼")
+
+    def test_referenced_legacy_group_is_kept(self):
+        # Regression: Ai自动选择 used to be dropped unconditionally, which broke
+        # any subscription still pointing at it from a group or a rule.
+        config = sample_config()
+        config["proxy-groups"].append(
+            {"name": "AI专用", "type": "select", "proxies": ["Ai自动选择"]}
+        )
+        config["proxy-groups"].append(
+            {"name": "Ai自动选择", "type": "url-test", "proxies": ["🇺🇸 美国-01"]}
+        )
+        config["rules"].insert(-1, "DOMAIN,example.org,Ai自动选择")
+
+        merged = clash.apply_customizations(config, self.rule_sets)
+        self.assertIsNotNone(clash._group_by_name(merged, "Ai自动选择"))
+        self.assertIn("DOMAIN,example.org,Ai自动选择", merged["rules"])
+        group_names = [group["name"] for group in merged["proxy-groups"]]
+        self.assertEqual(len(group_names), len(set(group_names)))
+        # A single pass, so the untouched legacy group survives once.
+        self.assertEqual(group_names.count("Ai自动选择"), 1)
+
+    def test_unreferenced_legacy_group_is_still_removed(self):
+        merged = clash.apply_customizations(sample_config(), self.rule_sets)
+        self.assertIsNone(clash._group_by_name(merged, "Ai自动选择"))
+
+    def test_subscription_without_proxy_groups_degrades(self):
+        config = {"rules": ["MATCH,DIRECT"]}
+        merged = clash.apply_customizations(config, self.rule_sets)
+        self.assertNotIn("proxy-groups", merged)
+        targets = {rule.split(",")[2] for rule in merged["rules"] if len(rule.split(",")) > 2}
+        self.assertTrue(targets <= {"DIRECT", "REJECT"})
+        self.assertEqual(merged["rules"][-1], "MATCH,DIRECT")
 
 
 class ScriptGenerationTests(unittest.TestCase):
@@ -543,6 +660,15 @@ class ServerPolicyTests(unittest.TestCase):
         # Reused dicts must not leak YAML anchors into a hand-edited file.
         self.assertNotIn("&id0", rendered)
         self.assertNotIn("*id0", rendered)
+
+    def test_rendered_policy_round_trips_filters_exactly(self):
+        # A folded long line would silently insert a space into the regex.
+        parsed = yaml.safe_load(clash.render_server_policy(self.rule_sets))
+        groups = {group["name"]: group for group in parsed["proxy-groups"]}
+        self.assertEqual(groups["Ai稳定选择"]["filter"], clash.AI_INCLUDE_FILTER)
+        self.assertEqual(groups["Ai测速备用"]["filter"], clash.AI_INCLUDE_FILTER)
+        self.assertEqual(groups["Dev+"]["filter"], clash.DEV_INCLUDE_FILTER)
+        self.assertEqual(groups["Ai稳定选择"]["exclude-filter"], clash.AI_EXCLUDE_FILTER)
 
 
 if __name__ == "__main__":

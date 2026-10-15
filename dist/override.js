@@ -157,16 +157,19 @@ const AI_PROBE_URL_BACKUP = "https://www.gstatic.com/generate_204";
 //   🇺🇸 美国-BGP-05【优化】
 //   🇺🇸 Basic-美国-BGP-01|v202605
 // The bounded us/usa tokens keep names like "Russia" or "Australia" from
-// matching accidentally.
-const AI_INCLUDE_SOURCE = "(?:🇺🇸|美国|美國|united[ -]?states|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))";
+// matching accidentally, "america" covers English-only US naming such as
+// "America-Los Angeles", and u.s.a. covers the dotted spelling.
+const AI_INCLUDE_SOURCE = "(?:🇺🇸|美国|美國|america|united[ -]?states|u\\.s\\.a\\.?|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))";
 // AI_EXCLUDE only strips informational nodes injected by airports. Region
 // filtering is AI_INCLUDE's job; a US-named node stays even if its name also
 // contains region words such as 香港. Observed variants across airports:
 //   剩余流量: 876.18 GB
 //   距离下次重置剩余：24 天
 //   套餐到期：2027-10-08
-//   官网 xxx.xyz 群组 t.me/...
-const AI_EXCLUDE_SOURCE = "(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\\s|_-])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\\s:：|_-]|$))";
+//   官网 xxx.invalid 群组 t.me/...
+//   【官网】xxx.invalid     (bracket right after 官网)
+//   Expire20270818         (no separator at all)
+const AI_EXCLUDE_SOURCE = "(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\\s|_\\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\\s:：|_\\-\\d【】()（）]|$))";
 
 const AI_INCLUDE = new RegExp(AI_INCLUDE_SOURCE, "i");
 const AI_EXCLUDE = new RegExp(AI_EXCLUDE_SOURCE, "i");
@@ -229,18 +232,39 @@ function fixProviderPaths(config) {
   }
 }
 
+// A group name can be referenced from another group's member list or from a
+// rule. Deleting a referenced group would leave a dangling target, and mihomo
+// then refuses the whole subscription - worse than not overriding at all.
+function isGroupReferenced(config, name) {
+  for (const group of Array.isArray(config["proxy-groups"]) ? config["proxy-groups"] : []) {
+    if (!group || group.name === name) continue;
+    if (Array.isArray(group.proxies) && group.proxies.includes(name)) return true;
+    if (Array.isArray(group.use) && group.use.includes(name)) return true;
+  }
+  for (const rule of Array.isArray(config.rules) ? config.rules : []) {
+    if (typeof rule !== "string") continue;
+    if (ruleTarget(rule) === name) return true;
+  }
+  return false;
+}
+
 // Remove groups owned by this project so re-running the script stays
-// idempotent. Group names listed here are this project's namespace.
+// idempotent. The four groups below are rebuilt immediately, so dropping them
+// is always safe. Ai自动选择 is NOT rebuilt: keep it whenever anything still
+// references it, because deleting a referenced group leaves a dangling target
+// and mihomo then refuses the whole subscription.
 function removeGeneratedGroups(config) {
-  const generated = [
+  const removable = new Set([
     AI_STABLE_GROUP,
     AI_AUTO_GROUP,
-    LEGACY_AI_AUTO_GROUP,
     SCHOLAR_GROUP,
     ACADEMIC_GROUP,
-  ];
+  ]);
+  if (!isGroupReferenced(config, LEGACY_AI_AUTO_GROUP)) {
+    removable.add(LEGACY_AI_AUTO_GROUP);
+  }
   config["proxy-groups"] = config["proxy-groups"].filter(
-    (group) => group && !generated.includes(group.name),
+    (group) => group && !removable.has(group.name),
   );
 }
 
@@ -299,14 +323,19 @@ function configureAiGroups(config, ai, source) {
 
   // Explicit member lists avoid runtime compatibility problems in FlClash
   // versions that display newer dynamic fields but do not preserve them.
-  // Coerce the type too: a new airport may ship Ai+ as url-test, and a
-  // url-test group cannot hold other groups as members.
+  // Coerce the type to select: the generated Ai+ only references other groups,
+  // and select is the group type guaranteed to accept group members, whatever
+  // type the new airport happened to ship.
+  // `use` must go as well: mihomo merges provider members into a group, so a
+  // leftover `use` without its filter would add unfiltered (non-US and
+  // informational) nodes straight into Ai+.
   ai.type = "select";
   ai.proxies = [AI_STABLE_GROUP, AI_AUTO_GROUP];
   for (const key of [
     "include-all",
     "include-all-proxies",
     "include-all-providers",
+    "use",
     "filter",
     "exclude-filter",
     "exclude-type",

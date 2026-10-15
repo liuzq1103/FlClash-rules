@@ -3,7 +3,7 @@ proxy-groups:
   type: url-test
   use:
   - subscription
-  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\s|_-])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_-]|$))
+  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\s|_\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_\-\d【】()（）]|$))
   url: https://www.gstatic.com/generate_204
   interval: 300
   tolerance: 50
@@ -11,14 +11,14 @@ proxy-groups:
   type: select
   use:
   - subscription
-  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\s|_-])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_-]|$))
-  filter: (?i)(?:🇺🇸|美国|美國|united[ -]?states|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))
+  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\s|_\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_\-\d【】()（）]|$))
+  filter: (?i)(?:🇺🇸|美国|美國|america|united[ -]?states|u\.s\.a\.?|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))
 - name: Ai测速备用
   type: url-test
   use:
   - subscription
-  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\s|_-])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_-]|$))
-  filter: (?i)(?:🇺🇸|美国|美國|united[ -]?states|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))
+  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\s|_\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_\-\d【】()（）]|$))
+  filter: (?i)(?:🇺🇸|美国|美國|america|united[ -]?states|u\.s\.a\.?|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))
   url: https://chatgpt.com/cdn-cgi/trace
   interval: 300
   tolerance: 50
@@ -35,8 +35,8 @@ proxy-groups:
   type: select
   use:
   - subscription
-  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\s|_-])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_-]|$))
-  filter: (?i)(?:🇭🇰|香港|hong[ -]?kong|(?:^|[^a-z])hk(?:[^a-z]|$)|🇺🇸|美国|美國|united[ -]?states|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))
+  exclude-filter: (?i)(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\s|_\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\s:：|_\-\d【】()（）]|$))
+  filter: (?i)(?:🇭🇰|香港|hong[ -]?kong|(?:^|[^a-z])hk(?:[^a-z]|$)|hkg|🇺🇸|美国|美國|america|united[ -]?states|u\.s\.a\.?|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))
   proxies:
   - PROXY
 - name: 学术搜索

@@ -59,18 +59,22 @@ NON_PROXY_TYPES = {
 # and Anthropic geo-block most other regions. To widen the region set later
 # (for example US + Japan), extend this pattern — do not revert to an
 # exclusion-style filter. The bounded us/usa tokens keep names like "Russia"
-# or "Australia" from matching accidentally.
+# or "Australia" from matching accidentally, and "america" covers English-only
+# US naming such as "America-Los Angeles".
 AI_INCLUDE_FILTER = (
-    r"(?i)(?:🇺🇸|美国|美國|united[ -]?states|"
+    r"(?i)(?:🇺🇸|美国|美國|america|united[ -]?states|u\.s\.a\.?|"
     r"(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))"
 )
 
 # Development traffic is not geo-restricted, so the server's Dev+ group also
 # accepts Hong Kong nodes: large pulls and CI jobs are faster from a nearby
-# exit. AI/geo-restricted domains never use this filter.
+# exit. `hkg` covers the IATA spelling (e.g. "HKG-IEPL-03"), which the bounded
+# `hk` token misses because a letter follows it. AI/geo-restricted domains
+# never use this filter.
 DEV_INCLUDE_FILTER = (
-    r"(?i)(?:🇭🇰|香港|hong[ -]?kong|(?:^|[^a-z])hk(?:[^a-z]|$)|"
-    r"🇺🇸|美国|美國|united[ -]?states|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))"
+    r"(?i)(?:🇭🇰|香港|hong[ -]?kong|(?:^|[^a-z])hk(?:[^a-z]|$)|hkg|"
+    r"🇺🇸|美国|美國|america|united[ -]?states|u\.s\.a\.?|"
+    r"(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))"
 )
 
 # Informational-node filter: strips airport info lines only (Expire/Traffic/
@@ -80,8 +84,8 @@ DEV_INCLUDE_FILTER = (
 # "套餐到期：2027-10-08", "官网 xxx.xyz 群组 t.me/...".
 AI_EXCLUDE_FILTER = (
     r"(?i)(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|"
-    r"(?:^|[\s|_-])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)"
-    r"(?:[\s:：|_-]|$))"
+    r"(?:^|[\s|_\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)"
+    r"(?:[\s:：|_\-\d【】()（）]|$))"
 )
 
 BUILTIN_TARGETS = {
@@ -168,16 +172,10 @@ def _rule_shadows(earlier, later):
     return False
 
 
-def _rule_set_targets(definition, artifact, index_path, position):
-    """Return {artifact: effective target} for one rule-set definition."""
+def _rule_set_targets(definition, index_path, position):
+    """Return (effective targets per artifact, artifact list) for one rule-set."""
     target = definition["target"]
     server_target = definition.get("server-target")
-    if server_target is not None and (
-        not isinstance(server_target, str) or not server_target
-    ):
-        raise ConfigError(
-            f"{index_path}: rule-set #{position} has an invalid server-target"
-        )
     artifacts = definition.get("artifacts", list(ARTIFACTS))
     if (
         not isinstance(artifacts, list)
@@ -187,6 +185,20 @@ def _rule_set_targets(definition, artifact, index_path, position):
         raise ConfigError(
             f"{index_path}: rule-set #{position} artifacts must be a non-empty subset "
             f"of {list(ARTIFACTS)}"
+        )
+    if len(set(artifacts)) != len(artifacts):
+        raise ConfigError(f"{index_path}: rule-set #{position} repeats an artifact")
+    if server_target is not None and (
+        not isinstance(server_target, str) or not server_target
+    ):
+        raise ConfigError(
+            f"{index_path}: rule-set #{position} has an invalid server-target"
+        )
+    if server_target is not None and ARTIFACT_SERVER not in artifacts:
+        # The value would be stored but never used: a silent typo trap.
+        raise ConfigError(
+            f"{index_path}: rule-set #{position} declares server-target but is not "
+            "part of the server artifact"
         )
     return {
         ARTIFACT_CLIENT: target,
@@ -204,7 +216,7 @@ def load_rule_sets(index_path=RULES_INDEX):
     names = set()
     files = set()
     exact_rules = {}
-    parsed_rules = []  # (type, value, normalized, {artifact: target})
+    parsed_rules = []  # (type, value, normalized, {artifact: target}, artifacts)
     rule_targets = {}
     rule_sets = []
 
@@ -224,7 +236,7 @@ def load_rule_sets(index_path=RULES_INDEX):
         if file_name in files:
             raise ConfigError(f"{index_path}: duplicate rule file: {file_name}")
 
-        targets, artifacts = _rule_set_targets(definition, None, index_path, position)
+        targets, artifacts = _rule_set_targets(definition, index_path, position)
 
         rule_path = (index_path.parent / file_name).resolve()
         if rule_path.parent != index_path.parent.resolve():
@@ -248,11 +260,13 @@ def load_rule_sets(index_path=RULES_INDEX):
                 )
 
             # Shadowing depends on the *effective* target, which can differ per
-            # artifact, so every artifact is validated independently.
+            # artifact, so every artifact is validated independently. A rule
+            # only participates in an artifact when its own rule-set does.
             for artifact in artifacts:
                 for earlier in parsed_rules:
                     earlier_targets = earlier[3]
-                    if artifact not in earlier_targets:
+                    earlier_artifacts = earlier[4]
+                    if artifact not in earlier_artifacts:
                         continue
                     if earlier_targets[artifact] != targets[artifact]:
                         continue
@@ -263,8 +277,8 @@ def load_rule_sets(index_path=RULES_INDEX):
                         )
 
             exact_rules[normalized] = f"{rule_path}:{line_number}"
-            parsed_rules.append((parsed[0], parsed[1], parsed[2], targets))
-            rule_targets[normalized] = targets
+            parsed_rules.append((parsed[0], parsed[1], parsed[2], targets, artifacts))
+            rule_targets[normalized] = (targets, artifacts)
             normalized_payload.append(normalized)
 
         names.add(name)
@@ -303,14 +317,20 @@ def load_rule_sets(index_path=RULES_INDEX):
                 raise ConfigError(
                     f"{index_path}: route-constraint {constraint_name} has an invalid rule"
                 )
-            rule_target_map = rule_targets.get(constrained_rule)
-            if rule_target_map is None:
+            rule_entry = rule_targets.get(constrained_rule)
+            if rule_entry is None:
                 raise ConfigError(
                     f"{index_path}: route-constraint {constraint_name} references a missing rule: "
                     f"{constrained_rule}"
                 )
-            # A constraint pins the client target; the server artifact may send
-            # the same domain elsewhere on purpose (see dev.yaml).
+            rule_target_map, rule_artifacts = rule_entry
+            # Constraints pin the *client* route. A rule that only exists in the
+            # server artifact produces no client rule, so it cannot be pinned.
+            if ARTIFACT_CLIENT not in rule_artifacts:
+                raise ConfigError(
+                    f"{index_path}: route-constraint {constraint_name} references "
+                    f"{constrained_rule}, which is not part of the client artifact"
+                )
             if rule_target_map[ARTIFACT_CLIENT] != constraint_target:
                 raise ConfigError(
                     f"{index_path}: route-constraint {constraint_name} requires "
@@ -364,6 +384,36 @@ def _provider_filter_fields(include_filter, providers):
     return {"use": list(providers), "filter": include_filter, "exclude-filter": AI_EXCLUDE_FILTER}
 
 
+def _group_is_referenced(config, name):
+    """True when a group name is used as a member or as a rule target.
+
+    Deleting a referenced group would leave a dangling target, and mihomo then
+    refuses the whole configuration.
+    """
+    for group in config.get("proxy-groups") or []:
+        if not isinstance(group, dict) or group.get("name") == name:
+            continue
+        if name in (group.get("proxies") or []) or name in (group.get("use") or []):
+            return True
+    for rule in config.get("rules") or []:
+        if isinstance(rule, str) and _rule_target(rule) == name:
+            return True
+    return False
+
+
+def _removable_generated_groups(config):
+    """Generated group names that are safe to drop for a clean rebuild.
+
+    The AI/Scholar/Academic groups are rebuilt immediately, so removing them is
+    always safe. The legacy Ai自动选择 is not rebuilt: keep it whenever anything
+    still references it.
+    """
+    removable = {AI_STABLE_GROUP, AI_AUTO_GROUP, SCHOLAR_GROUP, ACADEMIC_GROUP}
+    if not _group_is_referenced(config, LEGACY_AI_AUTO_GROUP):
+        removable.add(LEGACY_AI_AUTO_GROUP)
+    return removable
+
+
 def configure_ai_groups(config):
     """Mirror of the override script's group construction; returns the mode.
 
@@ -377,7 +427,9 @@ def configure_ai_groups(config):
     """
     groups = config.get("proxy-groups")
     if not isinstance(groups, list):
-        raise ConfigError("source config must contain a proxy-groups list")
+        # Same tolerance as the runtime script: a subscription without groups
+        # still gets its rules, minus the rule-sets that need one.
+        return "degraded"
 
     nodes = _eligible_ai_nodes(config)
     providers = _provider_names(config)
@@ -400,18 +452,8 @@ def configure_ai_groups(config):
         )
         groups.insert(fallback_index, ai_group)
 
-    groups[:] = [
-        group
-        for group in groups
-        if group.get("name")
-        not in {
-            AI_STABLE_GROUP,
-            AI_AUTO_GROUP,
-            LEGACY_AI_AUTO_GROUP,
-            SCHOLAR_GROUP,
-            ACADEMIC_GROUP,
-        }
-    ]
+    removable = _removable_generated_groups(config)
+    groups[:] = [group for group in groups if group.get("name") not in removable]
     ai_index = groups.index(ai_group)
 
     ai_stable = {"name": AI_STABLE_GROUP, "type": "select"}
@@ -446,12 +488,16 @@ def configure_ai_groups(config):
 
     # Explicit member lists avoid runtime compatibility problems in FlClash
     # versions that display newer dynamic fields but do not preserve them.
+    # `use` must go as well: mihomo merges provider members into a group, so a
+    # leftover `use` without its filter would add unfiltered (non-US and
+    # informational) nodes straight into Ai+.
     ai_group["type"] = "select"
     ai_group["proxies"] = [AI_STABLE_GROUP, AI_AUTO_GROUP]
     for key in (
         "include-all",
         "include-all-proxies",
         "include-all-providers",
+        "use",
         "filter",
         "exclude-filter",
         "exclude-type",
@@ -461,11 +507,10 @@ def configure_ai_groups(config):
         ai_group.pop(key, None)
 
     fallback = _group_by_name(config, FALLBACK_GROUP)
-    if fallback is None:
-        raise ConfigError(f"source config is missing required proxy group: {FALLBACK_GROUP}")
-    choices = [choice for choice in fallback.get("proxies", []) if choice != "DIRECT"]
-    fallback["proxies"] = ["DIRECT"] + choices
-    fallback.pop("default-selected", None)
+    if fallback is not None:
+        choices = [choice for choice in fallback.get("proxies", []) if choice != "DIRECT"]
+        fallback["proxies"] = ["DIRECT"] + choices
+        fallback.pop("default-selected", None)
     return mode
 
 
@@ -475,10 +520,12 @@ def fix_provider_paths(config):
     Some providers ship Apple and AppleDev rule-providers that share one cache
     path, which breaks Mihomo startup. This is a targeted hack for that
     particular subscription — re-evaluate it whenever the subscription changes.
+    A subscription without rule-providers simply needs no fix, same as the
+    runtime script.
     """
     providers = config.get("rule-providers")
     if not isinstance(providers, dict):
-        raise ConfigError("source config must contain a rule-providers mapping")
+        return
 
     apple = providers.get("Apple")
     apple_dev = providers.get("AppleDev")
@@ -615,16 +662,22 @@ def validate_config(config, retained_rules, mode="inline"):
     proxy_providers = config.get("proxy-providers")
     rule_providers = config.get("rule-providers")
     rules = config.get("rules")
+    if not isinstance(rules, list):
+        raise ConfigError("configuration requires a rules list")
     if not isinstance(groups, list):
-        raise ConfigError("configuration requires a proxy-groups list")
-    if not isinstance(proxies, list) and not isinstance(proxy_providers, dict):
+        # Mirrors the runtime script: without proxy-groups only DIRECT/REJECT
+        # rule-sets survive, and group validation is skipped.
+        mode = "degraded"
+    elif not isinstance(proxies, list) and not isinstance(proxy_providers, dict):
         raise ConfigError("configuration requires a proxies list or proxy-providers mapping")
-    if not isinstance(rule_providers, dict) or not isinstance(rules, list):
-        raise ConfigError("configuration requires rule-providers and rules")
+    rule_providers = rule_providers if isinstance(rule_providers, dict) else {}
 
-    group_names = [group.get("name") for group in groups]
-    if len(group_names) != len(set(group_names)):
-        raise ConfigError("proxy group names must be unique")
+    if isinstance(groups, list):
+        group_names = [group.get("name") for group in groups if isinstance(group, dict)]
+        if len(group_names) != len(set(group_names)):
+            raise ConfigError("proxy group names must be unique")
+    else:
+        group_names = []
 
     proxy_names = {
         proxy.get("name")
@@ -668,7 +721,7 @@ def validate_config(config, retained_rules, mode="inline"):
     scholar = _group_by_name(config, SCHOLAR_GROUP)
     academic = _group_by_name(config, ACADEMIC_GROUP)
     fallback = _group_by_name(config, FALLBACK_GROUP)
-    if mode == "no-nodes":
+    if mode in {"no-nodes", "degraded"}:
         # Nothing was configured; only the "no dangling target" invariant and
         # the rule order matter here.
         if not retained_rules:
@@ -811,11 +864,14 @@ def build_server_policy(rule_sets):
 
 
 def render_server_policy(rule_sets):
+    # width=inf keeps the long filter regexes on one line: PyYAML would
+    # otherwise fold them and silently insert a space at the break.
     return yaml.safe_dump(
         build_server_policy(rule_sets),
         allow_unicode=True,
         sort_keys=False,
         default_flow_style=False,
+        width=float("inf"),
     )
 
 

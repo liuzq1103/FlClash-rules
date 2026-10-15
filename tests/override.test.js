@@ -38,7 +38,7 @@ const INFO_NODES = [
   "Expire: 2027-08-18",
   "Traffic: 316.97GB | 1.66TB",
   "Sync: 2026-10-15 20:42:00",
-  "🇺🇳 官网 helloshudong.com|v202605",
+  "🇺🇳 官网 example.invalid|v1",
 ];
 
 function sampleConfig() {
@@ -103,7 +103,8 @@ const NANO_INFO_NODES = [
   "剩余流量: 876.18 GB",
   "距离下次重置剩余：24 天",
   "套餐到期：2027-10-08",
-  "官网 小黑子.xyz chicken.fufufu.sbs 群组 t.me/nekoport",
+  // Airport hostnames are anonymised: the filter only needs the shape.
+  "官网 example.invalid example2.invalid 群组 t.me/example",
 ];
 
 function nanoportConfig() {
@@ -135,10 +136,13 @@ function byName(result, name) {
 }
 
 // Every injected rule must point at a target this config really defines,
-// otherwise mihomo refuses to load the whole subscription.
+// otherwise mihomo refuses to load the whole subscription. Group member lists
+// are checked too: a member that is neither a group, a proxy nor a builtin is
+// just as fatal.
 function assertNoDanglingTargets(result) {
+  const groups = (result["proxy-groups"] || []).filter(Boolean);
   const available = new Set([
-    ...((result["proxy-groups"] || []).map((group) => group && group.name).filter(Boolean)),
+    ...groups.map((group) => group.name).filter(Boolean),
     ...((result.proxies || []).map((proxy) => proxy && proxy.name).filter(Boolean)),
     "DIRECT",
     "REJECT",
@@ -146,13 +150,50 @@ function assertNoDanglingTargets(result) {
     "PASS",
     "COMPATIBLE",
   ]);
-  for (const rule of result.rules) {
+  for (const group of groups) {
+    for (const member of group.proxies || []) {
+      assert.ok(available.has(member), `group ${group.name} has dangling member ${member}`);
+    }
+    for (const provider of group.use || []) {
+      assert.ok(
+        (result["proxy-providers"] || {})[provider],
+        `group ${group.name} uses unknown provider ${provider}`,
+      );
+    }
+  }
+  // Only our injected rules: a source subscription may legitimately carry its
+  // own pre-existing references, and that is not something this script caused.
+  const injected = result.__flclashRules ? result.__flclashRules.rules : 0;
+  for (const rule of result.rules.slice(0, injected)) {
     if (rule.startsWith("RULE-SET,") || rule.startsWith("MATCH,")) continue;
     const target = rule.split(",").map((part) => part.trim())[2];
-    assert.ok(
-      !target || available.has(target),
-      `dangling target ${target} in ${rule}`,
-    );
+    assert.ok(!target || available.has(target), `dangling target ${target} in ${rule}`);
+  }
+}
+
+// The whole config must be loadable: group members AND every rule target,
+// including the subscription's own rules.
+function assertFullyLoadable(result) {
+  const groups = (result["proxy-groups"] || []).filter(Boolean);
+  const available = new Set([
+    ...groups.map((group) => group.name).filter(Boolean),
+    ...((result.proxies || []).map((proxy) => proxy && proxy.name).filter(Boolean)),
+    "DIRECT",
+    "REJECT",
+    "REJECT-DROP",
+    "PASS",
+    "COMPATIBLE",
+  ]);
+  for (const group of groups) {
+    for (const member of group.proxies || []) {
+      assert.ok(available.has(member), `group ${group.name} has dangling member ${member}`);
+    }
+  }
+  for (const rule of result.rules) {
+    if (rule.startsWith("RULE-SET,")) continue;
+    const parts = rule.split(",").map((part) => part.trim());
+    const target = parts[0] === "MATCH" ? parts[1] : parts[2];
+    assert.ok(!target || available.has(target), `rule ${rule} -> dangling ${target}`);
   }
 }
 
@@ -212,6 +253,7 @@ test("inline subscription builds the US-whitelist groups and a marker", () => {
     result.rules.lastIndexOf("DOMAIN-SUFFIX,doubleclick.net,REJECT"),
   );
   assertNoDanglingTargets(result);
+  assertFullyLoadable(result);
 
   const marker = plain(result.__flclashRules);
   assert.equal(marker.applied, true);
@@ -262,6 +304,7 @@ test("a different airport without Ai+ gets the group created", () => {
   assert.ok(result.rules.includes("DOMAIN,scholar.google.com,学术搜索"));
   assert.deepEqual(result.rules.slice(0, customRules.length), customRules);
   assertNoDanglingTargets(result);
+  assertFullyLoadable(result);
 
   const marker = plain(result.__flclashRules);
   assert.equal(marker.applied, true);
@@ -274,6 +317,7 @@ test("proxy-providers subscription resolves US nodes at runtime", () => {
       sub: { type: "http", url: "https://example.test/sub", path: "./p.yaml" },
     },
     "proxy-groups": [
+      { name: "自动选择", type: "url-test", use: ["sub"] },
       { name: "Ai+", type: "select", proxies: ["手动选择"] },
       { name: "手动选择", type: "select", proxies: ["自动选择"] },
       { name: "漏网之鱼", type: "select", proxies: ["手动选择", "DIRECT"] },
@@ -286,7 +330,7 @@ test("proxy-providers subscription resolves US nodes at runtime", () => {
   assert.deepEqual(errors, []);
 
   const includeFilter =
-    "(?i)(?:🇺🇸|美国|美國|united[ -]?states|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))";
+    "(?i)(?:🇺🇸|美国|美國|america|united[ -]?states|u\\.s\\.a\\.?|(?:^|[^a-z])(?:us|usa)(?:[^a-z]|$))";
   // Same three-group shape as inline mode, just resolved by the core.
   const stable = byName(result, "Ai稳定选择");
   const auto = byName(result, "Ai测速备用");
@@ -305,6 +349,7 @@ test("proxy-providers subscription resolves US nodes at runtime", () => {
   assert.equal(byName(result, "漏网之鱼").proxies[0], "DIRECT");
   assert.deepEqual(result.rules.slice(0, customRules.length), customRules);
   assertNoDanglingTargets(result);
+  assertFullyLoadable(result);
   assert.equal(result.__flclashRules.mode, "provider");
 });
 
@@ -372,8 +417,14 @@ test("a subscription without proxy-groups degrades without breaking", () => {
 test("missing fallback group only skips the fallback adjustment", () => {
   const errors = [];
   const config = sampleConfig();
+  // A real airport that renamed the fallback group keeps pointing its MATCH
+  // rule at that renamed group, so the fixture does the same.
   config["proxy-groups"] = config["proxy-groups"].filter(
     (group) => group.name !== "漏网之鱼",
+  );
+  config["proxy-groups"].push({ name: "兜底", type: "select", proxies: ["自动选择"] });
+  config.rules = config.rules.map((rule) =>
+    rule === "MATCH,漏网之鱼" ? "MATCH,兜底" : rule,
   );
   const result = loadMain(errors).main(config);
 
@@ -383,7 +434,60 @@ test("missing fallback group only skips the fallback adjustment", () => {
     result.__flclashRules.warnings.some((warning) => warning.includes("漏网之鱼")),
   );
   assert.deepEqual(plain(byName(result, "Ai稳定选择").proxies), US_NODES);
-  assert.equal(result.rules.at(-1), "MATCH,漏网之鱼");
+  assert.equal(result.rules.at(-1), "MATCH,兜底");
+  assertFullyLoadable(result);
+});
+
+test("a referenced legacy group is never deleted", () => {
+  // Regression: Ai自动选择 used to be dropped unconditionally. A subscription
+  // whose other groups or rules still point at it would end up with a dangling
+  // target and mihomo would refuse the whole config.
+  const config = sampleConfig();
+  config["proxy-groups"].push({
+    name: "AI专用",
+    type: "select",
+    proxies: ["Ai自动选择"],
+  });
+  config.rules.push("DOMAIN,example.org,Ai自动选择");
+
+  const result = loadMain().main(config);
+  assert.ok(byName(result, "Ai自动选择"), "referenced legacy group must survive");
+  assert.deepEqual(plain(byName(result, "AI专用").proxies), ["Ai自动选择"]);
+  assert.ok(result.rules.includes("DOMAIN,example.org,Ai自动选择"));
+  assertFullyLoadable(result);
+});
+
+test("an unreferenced legacy group is still cleaned up", () => {
+  const result = loadMain().main(sampleConfig());
+  assert.equal(byName(result, "Ai自动选择"), undefined);
+});
+
+test("a provider-backed Ai+ does not leak unfiltered nodes", () => {
+  // Ai+ arriving with use+filter from the subscription: after the override it
+  // must hold only the two generated groups, otherwise mihomo merges the
+  // provider's non-US and informational nodes straight into Ai+.
+  const config = {
+    "proxy-providers": { sub: { type: "http", url: "https://example.test/sub" } },
+    "proxy-groups": [
+      {
+        name: "Ai+",
+        type: "select",
+        use: ["sub"],
+        filter: "(?i)hk",
+        "exclude-filter": "(?i)expire",
+        "include-all": true,
+      },
+      { name: "漏网之鱼", type: "select", proxies: ["DIRECT"] },
+    ],
+    rules: ["MATCH,漏网之鱼"],
+  };
+  const result = loadMain().main(config);
+  const ai = byName(result, "Ai+");
+  assert.deepEqual(plain(ai.proxies), ["Ai稳定选择", "Ai测速备用"]);
+  for (const key of ["use", "filter", "exclude-filter", "include-all"]) {
+    assert.ok(!(key in ai), `Ai+ must not keep ${key}`);
+  }
+  assertFullyLoadable(result);
 });
 
 test("invalid subscription returns the original config with a full stack", () => {

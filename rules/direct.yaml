@@ -1,15 +1,9 @@
 payload:
-  # Microsoft services stay direct.
+  # Microsoft services stay direct. GitHub/Copilot live in dev.yaml so they
+  # share one exit with the rest of the development traffic.
   - DOMAIN-SUFFIX,bing.com
   - DOMAIN-SUFFIX,microsoft.com
   - DOMAIN-SUFFIX,xboxlive.com
-
-  # GitHub Copilot works from any region and must not be pinned to US AI
-  # nodes; moved here from ai.yaml for that reason.
-  - DOMAIN-SUFFIX,githubcopilot.com
-
-  # SEA-AD research data must never consume a paid proxy node.
-  - DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com
 
   # Adobe package endpoint
   - DOMAIN,cc-ext-prod-pkgs.s3.amazonaws.com

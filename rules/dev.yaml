@@ -1,0 +1,28 @@
+# Development traffic: GitHub, model hubs, container registries and editor
+# update channels.
+#
+# Server policy sends these to Dev+ (any US/HK node, plus the fastest all-region
+# PROXY group) because large pulls and CI jobs benefit from a nearby exit.
+# The client compiles this rule-set with the Ai+ target so development traffic
+# shares one US exit with AI traffic: GitHub API rate limits are far higher from
+# a US IP, and HuggingFace/Docker stay reachable. GitHub Copilot rides along
+# here on purpose so it keeps the same exit as the rest of GitHub.
+payload:
+  # GitHub and code hosting
+  - DOMAIN-SUFFIX,github.com
+  - DOMAIN-SUFFIX,githubusercontent.com
+  - DOMAIN-SUFFIX,githubassets.com
+  - DOMAIN-SUFFIX,github.io
+  - DOMAIN-SUFFIX,sourcegraph.com
+  - DOMAIN-SUFFIX,githubcopilot.com
+
+  # HuggingFace and container registries (not reachable directly from CN).
+  # registry-1.docker.io and production.cloudflare.docker.com are already
+  # covered by the docker.io / docker.com suffixes below.
+  - DOMAIN-SUFFIX,huggingface.co
+  - DOMAIN-SUFFIX,hf.co
+  - DOMAIN-SUFFIX,docker.io
+  - DOMAIN-SUFFIX,docker.com
+
+  # Editor update channels
+  - DOMAIN-SUFFIX,cursor.sh

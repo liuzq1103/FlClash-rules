@@ -6,34 +6,27 @@ payload:
   - DOMAIN-SUFFIX,oaistatic.com
   - DOMAIN-SUFFIX,oaiusercontent.com
   - DOMAIN-SUFFIX,oaistatsig.com
+  - DOMAIN-SUFFIX,openai.fm
+  - DOMAIN-SUFFIX,sora.com
   - DOMAIN-SUFFIX,challenges.cloudflare.com
 
   # Academic and research services that work more reliably through an AI-safe node
-  - DOMAIN-SUFFIX,ncbi.nlm.nih.gov
   - DOMAIN-SUFFIX,sagepub.com
   - DOMAIN,gene-structure.vercel.app
   - DOMAIN-SUFFIX,synapse.org
   - DOMAIN,repo-prod.prod.sagebase.org
   - DOMAIN-SUFFIX,alphafoldserver.com
 
-  # Google AI and the exact shared session endpoints used by Gemini.  The
-  # google.com/sorry redirect, sign-in and app bootstrap must use the same
-  # exit as gemini.google.com; otherwise Google sees an IP change mid-session.
-  # Do not replace these exact matches with DOMAIN-SUFFIX,google.com: Scholar,
-  # YouTube and unrelated Google services must keep their existing policies.
-  - DOMAIN-SUFFIX,gemini.google.com
-  - DOMAIN-SUFFIX,aistudio.google.com
-  - DOMAIN-SUFFIX,bard.google.com
-  - DOMAIN-SUFFIX,makersuite.google.com
-  - DOMAIN,google.com
-  - DOMAIN,www.google.com
-  - DOMAIN,accounts.google.com
-  - DOMAIN,apis.google.com
-  - DOMAIN,ogs.google.com
-  - DOMAIN-SUFFIX,deepmind.com
+  # Google AI plus the rest of Google: one suffix covers gemini./aistudio./
+  # bard./makersuite./accounts./ogs./colab./notebooklm./docs./drive. Scholar
+  # keeps its own policy because Custom-Scholar is ordered above Custom-AI in
+  # index.yml (mihomo is first-match, so the exact DOMAIN wins).
+  - DOMAIN-SUFFIX,google.com
   - DOMAIN-SUFFIX,googleapis.com
+  - DOMAIN-SUFFIX,deepmind.com
   - DOMAIN-SUFFIX,gstatic.com
   - DOMAIN-SUFFIX,googleusercontent.com
+  - DOMAIN-SUFFIX,ggpht.com
 
   # Claude / Anthropic. claude.ai is the Anthropic primary domain and the web
   # app entry point; skipping it gets users redirected to
@@ -49,13 +42,6 @@ payload:
   - DOMAIN-SUFFIX,x.ai
   - DOMAIN-SUFFIX,x.com
 
-  # GitHub (Copilot works everywhere; see direct.yaml)
-  - DOMAIN-SUFFIX,github.com
-  - DOMAIN-SUFFIX,githubassets.com
-  - DOMAIN-SUFFIX,githubusercontent.com
-
-  # AI development, models and container delivery
-  - DOMAIN-SUFFIX,huggingface.co
-  - DOMAIN-SUFFIX,hf.co
-  - DOMAIN-SUFFIX,docker.io
-  - DOMAIN-SUFFIX,docker.com
+  # Other AI services and chat assistants
+  - DOMAIN-SUFFIX,perplexity.ai
+  - DOMAIN-SUFFIX,poe.com

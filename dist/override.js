@@ -169,7 +169,12 @@ const AI_INCLUDE_SOURCE = "(?:🇺🇸|美国|美國|america|united[ -]?states|u
 //   官网 xxx.invalid 群组 t.me/...
 //   【官网】xxx.invalid     (bracket right after 官网)
 //   Expire20270818         (no separator at all)
-const AI_EXCLUDE_SOURCE = "(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|(?:^|[\\s|_\\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\\s:：|_\\-\\d【】()（）]|$))";
+//
+// 到期/过期/重置 match as whole phrases or when a year follows. A bare "到期"
+// would also hit marketing-style node names such as "香港 永不过期 01", which
+// are real nodes and must stay selectable. The core evaluates this filter with
+// Go RE2, so lookbehind/lookahead are not available.
+const AI_EXCLUDE_SOURCE = "(?:🇺🇳|剩余流量|流量剩余|距离下次重置|重置剩余|到期时间|过期时间|套餐到期|套餐提示|订阅信息|(?:^|[\\s|_\\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)(?:[\\s:：|_\\-\\d【】()（）]|$)|(?:到期|过期|重置)[:：\\s_|-]*\\d{4}|剩余[:：\\s_|-]*\\d)";
 
 const AI_INCLUDE = new RegExp(AI_INCLUDE_SOURCE, "i");
 const AI_EXCLUDE = new RegExp(AI_EXCLUDE_SOURCE, "i");

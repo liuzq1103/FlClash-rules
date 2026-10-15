@@ -81,11 +81,19 @@ DEV_INCLUDE_FILTER = (
 # Sync/官网/套餐/剩余流量/到期/重置...). Region filtering is AI_INCLUDE_FILTER's
 # job; a US-named node stays even if its name also contains region words such
 # as 香港. Observed variants: "剩余流量: 876.18 GB", "距离下次重置剩余：24 天",
-# "套餐到期：2027-10-08", "官网 xxx.xyz 群组 t.me/...".
+# "套餐到期：2027-10-08", "官网 xxx.invalid 群组 t.me/...", "【官网】xxx.invalid",
+# "Expire20270818".
+#
+# 到期/过期/重置 match as whole phrases or when a year follows. A bare "到期"
+# would also hit marketing-style node names such as "香港 永不过期 01", which
+# are real nodes and must stay selectable. Mihomo evaluates this filter with Go
+# RE2, so lookbehind/lookahead are not available.
 AI_EXCLUDE_FILTER = (
-    r"(?i)(?:🇺🇳|剩余流量|流量剩余|到期|过期|重置|套餐提示|订阅信息|"
+    r"(?i)(?:🇺🇳|剩余流量|流量剩余|距离下次重置|重置剩余|到期时间|过期时间|套餐到期|"
+    r"套餐提示|订阅信息|"
     r"(?:^|[\s|_\-【】()（）])(?:expire|traffic|sync|reset|官网|套餐|订阅|更新|客服|网址)"
-    r"(?:[\s:：|_\-\d【】()（）]|$))"
+    r"(?:[\s:：|_\-\d【】()（）]|$)|"
+    r"(?:到期|过期|重置)[:：\s_|-]*\d{4}|剩余[:：\s_|-]*\d)"
 )
 
 BUILTIN_TARGETS = {

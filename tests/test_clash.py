@@ -415,10 +415,21 @@ class NodeFilterTests(unittest.TestCase):
             "【官网】example.invalid",
             "Expire20270818",
             "Traffic20270818GB",
+            "过期时间：2027-08-18",
+            "到期 2027-10-08",
+            "剩余：100GB",
         ]:
             self.assertRegex(name, pattern)
         # Region filtering is AI_INCLUDE's job; real nodes stay.
         for name in US_NODES + NANO_US_NODES + NANO_OTHER_NODES:
+            self.assertNotRegex(name, pattern)
+        # Marketing-style names that merely contain 到期/过期 are real nodes and
+        # must stay selectable.
+        for name in [
+            "🇭🇰 香港 永不过期 01",
+            "🇯🇵 日本 到期专线 01",
+            "🇺🇸 美国 重置专线 02",
+        ]:
             self.assertNotRegex(name, pattern)
 
 

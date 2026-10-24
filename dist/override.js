@@ -39,6 +39,7 @@ const CUSTOM_RULES = [
   "DOMAIN-SUFFIX,x.com,Ai+",
   "DOMAIN-SUFFIX,perplexity.ai,Ai+",
   "DOMAIN-SUFFIX,poe.com,Ai+",
+  "DOMAIN-SUFFIX,nemoarchive.org,Ai+",
   "DOMAIN-SUFFIX,github.com,Ai+",
   "DOMAIN-SUFFIX,githubusercontent.com,Ai+",
   "DOMAIN-SUFFIX,githubassets.com,Ai+",

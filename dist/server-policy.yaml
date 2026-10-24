@@ -82,6 +82,7 @@ rules:
 - DOMAIN-SUFFIX,x.com,Ai+
 - DOMAIN-SUFFIX,perplexity.ai,Ai+
 - DOMAIN-SUFFIX,poe.com,Ai+
+- DOMAIN-SUFFIX,nemoarchive.org,Ai+
 - DOMAIN-SUFFIX,github.com,Dev+
 - DOMAIN-SUFFIX,githubusercontent.com,Dev+
 - DOMAIN-SUFFIX,githubassets.com,Dev+

@@ -45,3 +45,4 @@ payload:
   # Other AI services and chat assistants
   - DOMAIN-SUFFIX,perplexity.ai
   - DOMAIN-SUFFIX,poe.com
+  - DOMAIN-SUFFIX,nemoarchive.org

@@ -34,11 +34,11 @@ ARTIFACT_CLIENT = "client"
 ARTIFACT_SERVER = "server"
 ARTIFACTS = (ARTIFACT_CLIENT, ARTIFACT_SERVER)
 
-# Health probes. The primary AI probe verifies the node can really reach
-# OpenAI (and filters nodes that are online but IP-banned by OpenAI); the
-# backup only proves generic connectivity. The plain group probe is cheap
-# connectivity for non-AI traffic. Confirm an endpoint is reachable before
-# changing any probe URL.
+# Health probes. The primary AI probe checks the ChatGPT trace endpoint's
+# current HTTP response; it cannot guarantee login, region permissions or
+# complete service availability. The backup and plain group probes check
+# generic connectivity. Confirm an endpoint is reachable before changing
+# any probe URL.
 AI_PROBE_URL = "https://chatgpt.com/cdn-cgi/trace"
 AI_PROBE_URL_BACKUP = "https://www.gstatic.com/generate_204"
 GENERIC_PROBE_URL = "https://www.gstatic.com/generate_204"
@@ -806,8 +806,8 @@ def render_override_script(rule_sets, template_path=TEMPLATE_PATH):
 def build_server_policy(rule_sets):
     """Build the non-secret policy fragment used by liuzq's server Mihomo.
 
-    The server always uses a `subscription` proxy-provider, so every group
-    resolves nodes with use+filter at runtime. The AI shape mirrors the
+    Four groups use the `subscription` proxy-provider directly; the others
+    resolve nodes through those groups. The AI shape mirrors the
     desktop script (stable pick + probed backup), and Dev+ adds an
     all-region fastest node because large pulls and CI jobs prefer a nearby
     exit over a US one.

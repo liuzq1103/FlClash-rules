@@ -263,6 +263,22 @@ test("inline subscription builds the US-whitelist groups and a marker", () => {
   assert.match(marker.version, /^\d+\.\d+\.\d+$/);
 });
 
+test("default desktop marker survives JSON serialization and exposes the 1.4.1 boundary", () => {
+  const { main } = loadMain();
+  const original = sampleConfig();
+  const result = JSON.parse(JSON.stringify(main(original)));
+  assert.equal(result.__flclashRules.applied, true);
+  assert.equal(result.__flclashRules.version, "1.1.1");
+  assert.equal(original.__flclashRules, undefined);
+  // mihomo-userctl v1.4.1 controller_policy.py POLICY_KEYS. A local contract
+  // regression, not a claim of executing that CLI or its core validator.
+  const allowed = new Set(["proxy-groups", "rules", "rule-providers"]);
+  const rejected = [...new Set([...Object.keys(original), ...Object.keys(result)])]
+    .filter(key => !allowed.has(key) &&
+      JSON.stringify(original[key]) !== JSON.stringify(result[key]));
+  assert.deepEqual(rejected, ["__flclashRules"]);
+});
+
 test("extension is idempotent", () => {
   const { main } = loadMain();
   const once = main(sampleConfig());
@@ -354,7 +370,6 @@ test("proxy-providers subscription resolves US nodes at runtime", () => {
 });
 
 test("no usable node source keeps the config loadable and skips AI rules", () => {
-  const { main } = loadMain();
   const config = {
     // A new airport with no US-named node and no provider to resolve.
     proxies: [
@@ -369,7 +384,8 @@ test("no usable node source keeps the config loadable and skips AI rules", () =>
     rules: ["MATCH,漏网之鱼"],
   };
   const errors = [];
-  const result = loadMain(errors).main(config);
+  const { main, customRules } = loadMain(errors);
+  const result = main(config);
   assert.deepEqual(errors, []);
 
   // No AI groups were created and no Ai+-targeting rule was injected, so the
@@ -389,7 +405,10 @@ test("no usable node source keeps the config loadable and skips AI rules", () =>
   const marker = plain(result.__flclashRules);
   assert.equal(marker.applied, true);
   assert.equal(marker.mode, "no-nodes");
-  assert.ok(marker.rules < 128);
+  const expectedRules = customRules.filter(rule =>
+    ["DIRECT", "REJECT"].includes(rule.split(",")[2]));
+  assert.equal(marker.rules, expectedRules.length);
+  assert.deepEqual(plain(result.rules.slice(0, marker.rules)), plain(expectedRules));
   assert.ok(marker.warnings.some((warning) => warning.includes("no usable AI node source")));
 });
 

@@ -1,338 +1,127 @@
-# `liuzq` 服务器 Mihomo 策略维护说明
+# 服务器 Mihomo 策略部署
 
-本文描述 `D:\Desktop\技术\FlClash` 如何生成服务器 Mihomo 的无秘密策略片段，以及如何安全维护服务器用户级 Mihomo。
+本仓库只负责规则源、策略组、桌面 `override.js` 与服务器 `server-policy.yaml`。配置导入、序列化、运行控制、核心校验及测速由独立的 [mihomo-userctl](https://github.com/liuzq1103/mihomo-userctl) 负责。
 
-## 0. 两个项目必须分开
+## 产物与兼容范围
 
-```text
-D:\Desktop\技术\FlClash
-  → PC 端 Clash/FlClash 规则脚本
-  → 同一规则源生成无秘密 dist/server-policy.yaml
+`dist/override.js` 用于 Clash Verge Rev / FlClash 桌面订阅脚本，成功和降级结果默认保留 `__flclashRules` 状态标记。服务器优先使用 `dist/server-policy.yaml`，它是策略片段，包含组和规则，需要本地 `subscription` provider 及既有运行配置，不是完整独立配置，不能直接作为 `mihomo -f` 输入启动。
 
-D:\Desktop\技术\mihomo-userctl
-  → 服务器端用户级服务控制和 Shell 集成
-  → 安装 mihomoctl、shell.bash、common.bash
+mihomoctl **1.4.1 不直接兼容**桌面脚本的默认状态标记。其脚本输出白名单只允许修改 `proxy-groups`、`rules`、`rule-providers`，新增 `__flclashRules` 会被拒绝，`--flclash-compat` 也未移除或接纳该字段。不要手工删除生成物中的标记作为长期方案；本指南不承诺其他版本已支持脚本。
+
+命令按 **mihomoctl v1.4.1 / `3bf2b78187b9de619664f8e1194f1d274af65bd5` 的源码**核对：[命令定义](https://github.com/liuzq1103/mihomo-userctl/blob/v1.4.1/mihomoctl/command_spec.py)、[订阅导入](https://github.com/liuzq1103/mihomo-userctl/blob/v1.4.1/mihomoctl/controller/controller_subscriptions.py)、[脚本白名单](https://github.com/liuzq1103/mihomo-userctl/blob/v1.4.1/mihomoctl/controller/controller_policy.py)、[订阅教程](https://github.com/liuzq1103/mihomo-userctl/blob/v1.4.1/docs/zh-CN/subscriptions.md)。这不代表生产服务器、真实订阅或实际业务的运行验收。执行前检查 `mihomoctl version` 和相关 `--help`；接口不同应停止并核对。
+
+## 策略语义与 provider 引用
+
+| 组 | 节点来源与默认行为 |
+|---|---|
+| `PROXY` | 直接 `use: [subscription]`；只排除信息行，全地区通用测速 |
+| `Ai稳定选择` | 直接引用 provider；美国白名单，人工选择稳定出口 |
+| `Ai测速备用` | 直接引用 provider；同一美国白名单，ChatGPT trace 探针要求 HTTP 200 |
+| `Dev+` | 直接引用 provider，筛选美国或香港；另含默认项 `PROXY`，该项可选全地区节点 |
+| `Ai+` | 间接引用 `Ai稳定选择`、`Ai测速备用`，稳定优先 |
+| `学术搜索` | 间接引用 `Ai+`，备用 `DIRECT` |
+| `学术访问` | 默认 `DIRECT`，备用间接引用 `Ai+` |
+
+只有四个组直接引用 provider，所有 `use` 都必须能找到同一导入文件中的 `subscription` 定义。不要给 `Ai+` 增加绕过美国筛选的 `use`。
+
+规则按顺序首个匹配生效：优先直连例外 → Scholar → AI → 开发 → 学术 → `MATCH,DIRECT`。未命中流量直连是设计行为。桌面专属广告、Tailscale 和 Adobe/Microsoft 规则不进入服务器产物。开发规则进入 `Dev+`，其默认 `PROXY` 不限美港。学术访问默认直连以保留机构出口身份。
+
+`generate_204` 成功仅说明探针连通；ChatGPT trace 返回 200 也只说明该端点的本次请求成功，不能保证登录、地区权限、会话或 ChatGPT/Claude 等完整业务可用。
+
+## 服务器本地组合示例
+
+前提：已按 mihomo-userctl 官方流程建立受管运行时。将选定版本的 `examples/server-provider.example.yaml` 和 `dist/server-policy.yaml` 放在服务器 `$HOME/flclash-rules` 下的对应子目录；Release 附件可按此目录摆放。以下命令由部署者在**服务器本地**执行，本项目发布过程不操作服务器：
+
+```bash
+umask 077
+mkdir -p "$HOME/private/flclash"
+chmod 700 "$HOME/private" "$HOME/private/flclash"
+cp "$HOME/flclash-rules/examples/server-provider.example.yaml" "$HOME/private/flclash/provider.yaml"
+chmod 600 "$HOME/private/flclash/provider.yaml"
 ```
 
-`FlClash` 是规则编译项目，负责回答“进入 Mihomo 后命中哪个策略”；
-`mihomo-userctl` 是服务器运行控制项目，负责回答“这个 Shell 或命令是否进入
-Mihomo”。两个目录是独立 Git 仓库，不互相复制源码、不共享秘密，也不能把
-`mihomo-userctl` 子目录提交到 FlClash 仓库。
+用本地编辑器打开 `$HOME/private/flclash/provider.yaml`，把 `url:` 后整个 `https://subscription.example.invalid/REPLACE_WITH_PRIVATE_SUBSCRIPTION` 替换成自己的 HTTPS 订阅 URL。占位域名有意不可用，未填写不要导入。真实 URL 只放在服务器私有副本，不放到命令行、仓库、issue、截图或发布资产。
 
-## 1. 文件职责
+provider 名称固定为 `subscription`；缓存路径 `./proxy_providers/subscription.yaml` 相对于管理器当前的**核心工作目录**解析，不是导入文件目录或 Shell 当前目录。缓存含节点秘密，必须留在服务器私有目录。不能指向活动配置、上级目录、其他 provider 的缓存或不可信符号链接；导入器会检查路径。
 
-```text
-rules/index.yml
-  → 定义规则文件顺序和目标策略
+每次从两个文件重新组合并覆盖输出，不要追加到旧文件：
 
-rules/*.yaml
-  → 自定义域名、IP 和目标策略的唯一来源
-
-clash.py
-  → 校验规则并生成两个产物
-
-dist/override.js
-  → Windows Clash Verge Rev / FlClash 订阅扩展脚本
-
-dist/server-policy.yaml
-  → 服务器 Mihomo 的策略组和规则片段
+```bash
+umask 077
+cat "$HOME/private/flclash/provider.yaml" \
+    "$HOME/flclash-rules/dist/server-policy.yaml" \
+    > "$HOME/private/flclash/routing-policy.yaml"
+chmod 600 "$HOME/private/flclash/routing-policy.yaml"
 ```
 
-服务器完整 `config.yaml` 不在仓库。它由以下内容组合：
+示例末尾带换行且没有 YAML 多文档分隔符，组合后仍是一个映射，包含 `proxy-providers`、`proxy-groups`、`rules`。这是**完整路由策略导入文件**，仍不是完整服务器配置，不包含 listener 或认证。保留片段多行格式和整行过滤正则，不要折行或文字替换改变正则。
 
-```text
-服务器本地 Listener 与认证
-  + 服务器本地 subscription proxy-provider
-  + dist/server-policy.yaml
+## 预览、保存与运行态
+
+```bash
+mihomoctl version
+mihomoctl subscription preview --source-file "$HOME/private/flclash/routing-policy.yaml" --policy provider --json
 ```
 
-## 2. server-policy 的固定设计
+明确使用 `provider` 完整策略模式。`nodes` 只导入节点，不安装本项目策略；`auto` 按是否存在路由字段推断模式。本例显式指定便于核对。provider 模式替换五类路由字段：`proxies`、`proxy-providers`、`proxy-groups`、`rules`、`rule-providers`；未提供的字段变为空列表或字典，既有内联节点和 rule-provider 可能被清除。不能只导入裸 `server-policy.yaml`，否则缺失 `subscription` 定义。
 
-`dist/server-policy.yaml` 包含 7 个组（全部用 `use: [subscription]` 在运行时取节点）：
+preview 保存私有候选并检查，但不保存活动配置、不启动或重启。只在本地审阅字段变更、删除项、组、规则、验证结果和摘要。JSON 信封的候选 ID 和 SHA256 在 `data.legacy.id`、`data.legacy.sha256`。将审阅通过的值填入占位位置：
 
-- `PROXY`：`url-test`，全地区最快节点，探针 `generate_204`，只剔除机场信息行；
-- `Ai稳定选择`：`select`，`filter` 为美国白名单，人工锁定；
-- `Ai测速备用`：`url-test`，同样的美国 `filter`，探针 `chatgpt.com/cdn-cgi/trace` 且要求 `200`；
-- `Ai+`：`select`，`[Ai稳定选择, Ai测速备用]`，稳定优先；
-- `Dev+`：`select`，`filter` 为「美国 + 香港」，默认项是 `PROXY`，供 GitHub / HuggingFace / Docker / Cursor 使用；
-- `学术搜索`：`Ai+` 在前，`DIRECT` 备选；
-- `学术访问`：`DIRECT` 在前，`Ai+` 备选；
+```bash
+mihomoctl subscription apply PREVIEW_ID --sha256 CANDIDATE_SHA256
+mihomoctl config validate
+```
 
-外加服务器用到的自定义规则（最后一条 `MATCH,DIRECT`）。桌面专用的规则（广告拦截、Tailscale、Adobe/Microsoft）不会进入本文件，因为它们在 `rules/index.yml` 里标了 `artifacts: [client]`；`rules/dev.yaml` 在这里被编译成 `Dev+`（`server-target`）。
+apply 检查原配置漂移、候选摘要、字段边界和核心校验，再事务保存；保存不等于加载运行态。任一步失败都先停止并排障；配置变化后重新 preview，不编辑候选绕过校验。
 
-它不包含：
+服务未运行时显式启动：
 
-- `proxy-providers:`；
-- 订阅 URL；
-- Listener 用户名或密码；
-- 节点配置；
-- provider 缓存；
-- VS Code 认证 URL。
+```bash
+mihomoctl start
+```
 
-## 3. 生成与验证
+服务已运行、需要加载新保存配置时显式重启：
 
-在仓库根目录：
+```bash
+mihomoctl restart
+```
+
+随后检查：
+
+```bash
+mihomoctl status
+mihomoctl health check
+mihomoctl groups
+mihomoctl providers
+mihomoctl logs --lines 100
+mihomoctl exec -- curl --fail --head https://chatgpt.com
+```
+
+按实际组成员在 `Ai稳定选择` 人工选可用美国节点。节点名、日志、连接详情和 preview 输出只在本地审阅，不发布。端口、本地健康检查或 HTTP 成功都不能单独证明目标命中正确规则或业务可用；需对照实际 mode、目标规则、组选择和真实请求验证。
+
+## 旧接口与跨仓库限制
+
+本指南不混用旧 Shell 函数、手工替换活动配置和历史 systemd 流程；`ready` 已退出当前接口，使用 `health check`。桌面使用方法见 README 的桌面章节。
+
+以下现场问题由 mihomo-userctl 修复，本仓库不改变策略来绕过：默认标记与字段白名单不兼容；导入后列表或字典压成一行；核心校验超时、缓存未复用和重复校验；provider 节点测速被判 `unknown-node`；权限错误仅显示 `InstallError`；TUI 保存失败阶段和运行状态不明确。
+
+本仓库发布的 YAML 保持多行，但不能保证旧导入器保存后保持格式。失败时记录脱敏版本、阶段和退出状态，不把保存失败报告成运行成功，也不承诺未经验证的新版本已解决问题。
+
+## 修改、验证与隐私
+
+只修改规则源、模板或生成器，再生成产物：
 
 ```powershell
 python clash.py --check-rules
 python clash.py
 python clash.py --check
-python -m unittest discover -s tests -p "test_*.py"
+python -m unittest discover -s tests -v
 node --test tests/*.js
 git diff --check
 ```
 
-当前期望：
+测试数量以实际输出为准。示例组合、provider 引用、缓存路径、策略目标、正则往返及桌面标记均有离线测试；离线测试不证明服务器或真实订阅可用。
 
-```text
-规则数：129
-Python 测试：15
-Node 测试：5
-```
+真实订阅、节点凭据、listener 认证、控制器密钥、完整配置、候选和缓存仅存服务器权限收紧的目录及私有备份。不要提交编辑后的示例。回滚使用事先准备并验证的私有备份及控制器对应版本说明，恢复后重新校验并显式加载；历史现场路径不是通用回滚命令。
 
-敏感信息扫描：
-
-```powershell
-rg -n -i "(subscription[_-]?url|password|secret|token):|https?://[^[:space:]]+@" `
-  dist/server-policy.yaml clash.py tests/test_clash.py
-```
-
-正常结果为空。
-
-## 4. 修改规则
-
-不要直接编辑 `dist/override.js` 或 `dist/server-policy.yaml`。它们是生成物。
-
-正确流程：
-
-1. 在对应的 `rules/*.yaml` 修改源规则；
-2. 检查 `rules/index.yml` 中优先级；
-3. 运行全部生成和测试命令；
-4. 查看 `git diff`；
-5. 确认没有订阅、节点或凭据；
-6. 再部署生成物。
-
-规则按文件和文件内顺序展开。越精确、越重要的规则应越靠前。
-
-## 5. SEA-AD 保险规则
-
-服务器和 Windows 共享精确规则：
-
-```text
-DOMAIN,sea-ad-single-cell-profiling.s3.amazonaws.com,DIRECT
-```
-
-不要改成：
-
-```text
-DOMAIN-SUFFIX,amazonaws.com,DIRECT
-```
-
-原因是整个 AWS 域名空间中可能存在需要代理的其他服务。精确域名只保护已确认的大数据入口。
-
-## 6. 部署 server-policy
-
-部署前：
-
-```powershell
-python clash.py --check
-git diff --check
-```
-
-将无秘密片段复制到服务器允许目录：
-
-```powershell
-scp dist/server-policy.yaml `
-  "liuzq细胞房:/home/liuzq/.local/share/mihomo/server-policy.yaml"
-```
-
-服务器文件权限：
-
-```bash
-chmod 600 ~/.local/share/mihomo/server-policy.yaml
-```
-
-完整配置必须在服务器安全构建，不能把订阅 URL或密码写回仓库。
-
-更新完整配置前始终：
-
-```bash
-~/.local/bin/mihomo -t \
-  -d ~/.local/share/mihomo \
-  -f ~/.config/mihomo/config.yaml
-```
-
-然后：
-
-```bash
-mihomoctl restart
-proxy_status
-```
-
-## 7. 服务运维
-
-```bash
-mihomoctl start
-mihomoctl stop
-mihomoctl restart
-mihomoctl status
-mihomoctl ready
-mihomoctl doctor
-mihomoctl logs --lines 100
-```
-
-`mihomo_start`、`mihomo_stop` 等旧名称在 `0.x` 阶段只是兼容包装器；文档和
-新的自动化统一使用 `mihomoctl`。控制器来自独立的 `mihomo-userctl` 仓库，
-不是本 FlClash 规则生成器的一部分。
-
-服务必须保持：
-
-```bash
-systemctl --user is-enabled mihomo
-# disabled
-```
-
-禁止：
-
-```text
-sudo systemctl
-systemctl --user enable mihomo
-loginctl enable-linger
-/etc/systemd/system
-root service
-```
-
-## 8. 启动就绪语义
-
-订阅 provider 和 `Ai+` url-test 初始化是异步的。测试中观察到：
-
-```text
-端口刚出现
-  → 立即请求可能 502
-  → provider 加载和健康检查完成
-  → 请求正常
-```
-
-因此：
-
-- 不要用“17890 已监听”作为唯一成功标准；
-- 使用 `mihomoctl start` 或 `mihomoctl restart`；
-- 两个命令会执行认证请求并最多等待 30 秒；
-- 如果未 ready，应运行 `mihomoctl doctor` 和 `mihomoctl logs --lines 100`，不要绕过检查。
-
-## 9. 认证与秘密
-
-秘密只允许存在于：
-
-```text
-~/.config/mihomo/config.yaml
-~/.config/mihomo/client.env
-~/.local/share/mihomo/proxy_providers/subscription.yaml
-权限收紧的备份
-```
-
-不得：
-
-- 把订阅 URL 放进命令行；
-- 把密码作为 curl 参数；
-- 打印完整 `http.proxy`；
-- 提交 provider 缓存；
-- 把旧 Windows Listener 密码复制给服务器 Mihomo；
-- 在报告中显示节点或凭据。
-
-测试 curl 时，通过环境变量传递代理 URL，避免出现在进程参数中。
-
-## 10. 规则验证
-
-启动后可用日志确认：
-
-```bash
-with_proxy curl -I https://chatgpt.com
-with_proxy curl -I https://github.com
-with_proxy curl -I https://www.science.org
-with_proxy curl -I https://sea-ad-single-cell-profiling.s3.amazonaws.com/
-mihomo_logs --since '5 minutes ago'
-```
-
-期望：
-
-```text
-chatgpt.com → Ai+
-claude.ai → Ai+
-github.com → Dev+
-huggingface.co → Dev+
-science.org → 学术访问[DIRECT]
-SEA-AD → DIRECT
-```
-
-未认证请求必须失败。
-
-## 10.1 凭据卫生（重要）
-
-服务器 `config.yaml` 含三类敏感信息：**订阅 URL 及其 token、Listener 用户名密码、`external-controller` 的 `secret`**。要求：
-
-- 该文件只放在服务器权限收紧的目录，绝不进入本仓库（仓库里的 `local/`、`input/`、`output/` 已在 `.gitignore` 中排除）；
-- 不要把完整 `config.yaml` 贴进聊天、issue 或 PR；需要讨论配置结构时先把这些值替换成占位符；
-- 这些值一旦以明文外流（贴进对话、聊天记录、截图），**必须整体轮换**：重新生成订阅 token、改 Listener 密码、改 `secret`，并同步更新 provider 缓存里已保存的旧订阅 URL；
-- 轮换后按第 9 节复测，确认 Listener 认证与代理出口都正常。
-
-## 11. 大文件原则
-
-规则只是保险，默认 Shell 直连才是根本控制：
-
-```bash
-proxy_off
-proxy_status
-axel -n 10 'large-file-url'
-```
-
-必须看到 `shell=direct`。
-
-## 12. 回滚
-
-服务器备份：
-
-```text
-/home/liuzq/.config/mihomo/backups/20260824-112605
-/home/liuzq/.config/mihomo/backups/20260824-113928-cutover
-/home/liuzq/.local/share/mihomo/backups/20260824-112605
-/home/liuzq/.local/share/mihomo/backups/migration-tools-20260824-141750
-```
-
-回滚流程：
-
-1. `proxy_off` 后执行 `mihomoctl stop`；
-2. 恢复目标配置到候选路径；
-3. 检查权限；
-4. 执行 `mihomo -t`；
-5. 原子替换活动文件；
-6. `systemctl --user daemon-reload`；
-7. `mihomoctl start`；
-8. 验证默认直连和 service disabled。
-
-不要把 PC `RemoteForward` 恢复成长期架构。
-
-## 13. 最终迁移状态
-
-已完成：
-
-- v1.19.30 安装和 SHA256 验证；
-- server-policy 生成器和测试；
-- 17894 完整隔离验收；
-- 受管 PC 隧道精确停止；
-- 正式 17890 启动；
-- `.bashrc`、Codex payload 和 VS Code 设置迁移；
-- 用户服务生命周期测试。
-- `.bashrc` 中约 200 行实现已拆到独立 `mihomo-userctl` 项目；
-- `.bashrc` 只保留权限校验和 `source shell.bash` 的短 loader；
-- `mihomoctl` 与 Shell 函数的隔离测试为 15/15 通过。
-
-- 用户已确认普通新 Codex/VS Code 会话连接成功；
-- 两个旧 `liuzq` 隧道 Host 已精确移除；
-- 旧脚本和编码备份已归档，活动状态文件不存在；
-- Windows `17891` Listener 已删除并热重载；
-- 常规 Windows `7890`、系统代理和清理前实际 TUN 状态保持；
-- 旧 private-proxy 活动文件已归档；
-- 非 `liuzq` Host 块哈希、端口、运行时语义和敏感信息扫描进入最终验收。
-
-范围外服务器 `127.0.0.1:7890` 无论是否存在都不处理。
+发布与审核要求见 [发布规范](RELEASING.md)。

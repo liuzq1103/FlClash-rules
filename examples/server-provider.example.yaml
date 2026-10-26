@@ -1,0 +1,14 @@
+# Example fragment only: copy to a private SERVER directory before editing.
+# Replace the entire URL below with your private HTTPS subscription URL.
+# Never commit the edited file or provider cache. Append server-policy.yaml
+# to a fresh copy of this fragment to make a complete routing-policy import.
+proxy-providers:
+  subscription:
+    type: http
+    url: https://subscription.example.invalid/REPLACE_WITH_PRIVATE_SUBSCRIPTION
+    interval: 3600
+    path: ./proxy_providers/subscription.yaml
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+      interval: 300

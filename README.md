@@ -31,7 +31,7 @@
 
 ### 换机场时如何适配
 
-脚本对机场的假设只有三条，其余一律降级处理，**永远不会产出 mihomo 无法加载的配置**：
+脚本对机场的假设只有三条，其余按下表降级处理；自检可发现引用等结构问题，但不能代替客户端或核心的实际校验：
 
 1. 内联节点（`proxies`）或 `proxy-providers` 至少有一个可用来取节点；
 2. 节点名能命中美国白名单（`AI_INCLUDE`）；
@@ -158,7 +158,7 @@ FlClash 的脚本是与订阅关联的，不要只在“工具 → 进阶配置 
 
 **探针说明**：
 
-- 主探针验证的是"节点真的能访问 OpenAI"，能筛出"能上网但被 OpenAI 封 IP"的节点；代价是它就是被代理的目标服务本身，属于单点。
+- 主探针检查 ChatGPT trace 端点能否返回 HTTP 200；它可能发现该端点的访问失败，但不能保证登录、地区权限、会话或完整 ChatGPT 业务可用，且存在端点单点风险。
 - 备用探针 `https://www.gstatic.com/generate_204` 只验证基础连通性，**不能**发现 OpenAI 的 IP 封禁；主探针失效或被 Cloudflare 收紧时才切换到它。
 - **修改任何探针 URL 前，请先用浏览器/直连环境确认端点可访问**，再改 `templates/override.js.tpl` 中的 `AI_PROBE_URL` 并重新生成。
 
@@ -317,13 +317,15 @@ python clash.py --check-rules           只检查 rules/，不读取订阅
 
 服务器策略固定为：
 
-- `Ai+`：动态使用 `subscription` provider，并用与美国白名单一致的 `filter` 只选美国节点；
+- `Ai+`：通过 `Ai稳定选择` / `Ai测速备用` 间接使用 `subscription` provider；美国筛选在这两个下层组执行；
 - `学术搜索`：默认 `Ai+`，保留 `DIRECT`；
 - `学术访问`：默认 `DIRECT`，保留 `Ai+`；
 - SEA-AD S3：精确 `DIRECT`；
 - 未命中规则：`MATCH,DIRECT`。
 
-部署、认证边界、手动 systemd 服务、测试与回滚见 [服务器 Mihomo 维护说明](docs/服务器Mihomo维护说明.md)。
+服务器优先使用 YAML 策略片段。mihomoctl **1.4.1 不直接兼容**桌面脚本默认返回的 `__flclashRules` 标记，`--flclash-compat` 也未处理它；不要手工删除生成物标记作为长期方案。
+
+无秘密 [provider 示例](examples/server-provider.example.yaml)、本地组合、完整策略导入及保存/启动/重启流程见 [服务器 Mihomo 维护说明](docs/服务器Mihomo维护说明.md)；该指南按 mihomoctl v1.4.1 源码核对，未执行生产部署。正式发布与三方审核门禁见 [发布规范](docs/RELEASING.md)。
 
 ## GitHub 同步与隐私
 
